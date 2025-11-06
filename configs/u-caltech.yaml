@@ -1,0 +1,239 @@
+# Configuration file for u-caltech dataset
+
+data_dir: "../data/u-caltech"
+val_split_ratio: 0.2  # 20% of training set for validation
+
+# Data loader settings
+data_loader:
+  num_workers: null  # null = auto-detect (4 for GPU, 2 for CPU)
+  pin_memory: null  # null = auto-detect (True for CUDA, False otherwise)
+
+# Coarse Reconstruction Configuration
+coarse:
+  # Model parameters
+  model:
+    time_steps: 25
+    v_threshold: 1.0
+    tau: 2.0
+    in_channels: 1
+    out_channels: 3
+  
+  # Loss parameters
+  loss:
+    type: "reconstruction"
+    l1_weight: 1.0
+    l2_weight: 1.0
+  
+  # Training parameters
+  training:
+    epochs: 50
+    batch_size: 8
+    learning_rate: 0.001
+    seed: 42
+    use_amp: false
+    grad_clip: 1.0
+  
+  # Optimizer configuration
+  optimizer:
+    type: "adam"  # adam, adamw, sgd
+    lr: 0.001  # Can override training.learning_rate
+    weight_decay: 0.0
+    momentum: 0.9  # Only for SGD
+  
+  # Scheduler configuration
+  scheduler:
+    type: "cosine"  # cosine, step, plateau
+    step_size: 30  # Only for step scheduler
+    gamma: 0.1  # Only for step scheduler
+  
+  # Output paths
+  output:
+    checkpoint_dir: "outputs/checkpoints/ucaltech"
+    log_dir: "outputs/logs"
+
+# Prompt Learning Configuration
+prompt:
+  # Model parameters
+  model:
+    clip_dim: 512
+    prompt_dim: 77
+    num_classes: 101  # Will be set from labels
+    freeze_image_encoder: true
+  
+  # Loss parameters
+  loss:
+    type: "clip"
+    temperature: 0.07
+  
+  # Training parameters
+  training:
+    epochs: 50
+    batch_size: 8
+    learning_rate: 0.0001
+    seed: 42
+    use_amp: false
+    grad_clip: 1.0
+  
+  # Optimizer configuration
+  optimizer:
+    type: "adam"  # adam, adamw, sgd
+    lr: 0.0001  # Can override training.learning_rate
+    weight_decay: 0.01
+    momentum: 0.9  # Only for SGD
+  
+  # Scheduler configuration
+  scheduler:
+    type: "cosine"  # cosine, step, plateau
+    step_size: 30  # Only for step scheduler
+    gamma: 0.1  # Only for step scheduler
+  
+  # Output paths
+  output:
+    checkpoint_dir: "outputs/checkpoints/ucaltech"
+    log_dir: "outputs/logs"
+
+# Refinement Configuration
+refine:
+  # Model parameters
+  model:
+    in_channels: 3
+    out_channels: 3
+    base_channels: 64
+    num_down: 4  # Number of downsampling layers
+  
+  # Loss parameters
+  loss:
+    type: "reconstruction"
+    l1_weight: 1.0
+    l2_weight: 1.0
+  
+  # Training parameters
+  training:
+    epochs: 50
+    batch_size: 8
+    learning_rate: 0.0001
+    seed: 42
+    use_amp: false
+    grad_clip: 1.0
+  
+  # Optimizer configuration
+  optimizer:
+    type: "adam"  # adam, adamw, sgd
+    lr: 0.0001  # Can override training.learning_rate
+    weight_decay: 0.0001
+    momentum: 0.9  # Only for SGD
+  
+  # Scheduler configuration
+  scheduler:
+    type: "cosine"  # cosine, step, plateau
+    step_size: 30  # Only for step scheduler
+    gamma: 0.1  # Only for step scheduler
+  
+  # Output paths
+  output:
+    checkpoint_dir: "outputs/checkpoints/ucaltech"
+    log_dir: "outputs/logs"
+
+labels:
+  - accordion
+  - airplanes
+  - anchor
+  - ant
+  - barrel
+  - bass
+  - beaver
+  - binocular
+  - bonsai
+  - brain
+  - brontosaurus
+  - buddha
+  - butterfly
+  - camera
+  - cannon
+  - car
+  - ceilingfan
+  - cellphone
+  - chair
+  - chandelier
+  - cougarbody
+  - cougarface
+  - crab
+  - crayfish
+  - crocodile
+  - crocodilehead
+  - cup
+  - dalmatian
+  - dollarbill
+  - dolphin
+  - dragonfly
+  - electricguitar
+  - elephant
+  - emu
+  - euphonium
+  - ewer
+  - faces
+  - ferry
+  - flamingo
+  - flamingohead
+  - garfield
+  - gerenuk
+  - gramophone
+  - grandpiano
+  - hawksbill
+  - headphone
+  - hedgehog
+  - helicopter
+  - ibis
+  - inlineskate
+  - joshuatree
+  - kangaroo
+  - ketch
+  - lamp
+  - laptop
+  - Leopards
+  - llama
+  - lobster
+  - lotus
+  - mandolin
+  - mayfly
+  - menorah
+  - metronome
+  - minaret
+  - Motorbikes
+  - nautilus
+  - octopus
+  - okapi
+  - pagoda
+  - panda
+  - pigeon
+  - pizza
+  - platypus
+  - pyramid
+  - revolver
+  - rhino
+  - rooster
+  - saxophone
+  - schooner
+  - scissors
+  - scorpion
+  - seahorse
+  - snoopy
+  - soccerball
+  - stapler
+  - starfish
+  - stegosaurus
+  - stopsign
+  - strawberry
+  - sunflower
+  - tick
+  - trilobite
+  - umbrella
+  - watch
+  - waterlilly
+  - wheelchair
+  - wildcat
+  - windsorchair
+  - wrench
+  - yinyang
+  - background
+
