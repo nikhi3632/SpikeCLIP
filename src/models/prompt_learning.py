@@ -5,6 +5,32 @@ import torch.nn.functional as F
 from typing import Optional
 import clip
 
+class TextEncoder(nn.Module):
+    """Text encoder to process learnable prompts through CLIP's text encoder (from reference code)."""
+    def __init__(self, clip_model):
+        super().__init__()
+        self.transformer = clip_model.transformer
+        self.positional_embedding = clip_model.positional_embedding
+        self.ln_final = clip_model.ln_final
+        self.text_projection = clip_model.text_projection
+        self.dtype = clip_model.dtype
+
+    def forward(self, prompts):
+        """
+        prompts: [B, prompt_dim, clip_dim] learnable prompt embeddings
+        Returns: [B, clip_dim] text features
+        """
+        # Add positional embedding (use first prompt_dim positions)
+        # prompts is [B, prompt_dim, clip_dim], positional_embedding is [prompt_dim, clip_dim]
+        x = prompts + self.positional_embedding[:prompts.shape[1]].type(self.dtype)
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.transformer(x)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.ln_final(x).type(self.dtype)
+        # Get features at the end position (like CLIP does)
+        x = x[torch.arange(x.shape[0]), -1] @ self.text_projection
+        return x
+
 class PromptAdapter(nn.Module):
     """
     CLIP adapter for prompt learning.
@@ -97,8 +123,17 @@ class PromptAdapter(nn.Module):
         
         # Learnable text prompts (one per class)
         # Each prompt is a learnable embedding that will be processed by CLIP's text encoder
-        # Format: [num_classes, prompt_dim] where prompt_dim is the token sequence length
+        # Format: [num_classes, prompt_dim, clip_dim] where prompt_dim is the token sequence length
         self.class_prompts = nn.Parameter(init_prompts)
+        
+        # Text encoder to process prompts through CLIP's text encoder (like reference code)
+        if self.clip_model is not None:
+            self.text_encoder = TextEncoder(self.clip_model)
+            # Freeze text encoder parameters (only prompts are learnable)
+            for param in self.text_encoder.parameters():
+                param.requires_grad = False
+        else:
+            self.text_encoder = None
         
         # Projection to match CLIP dimensions (for images)
         self.projection = nn.Sequential(
@@ -145,15 +180,24 @@ class PromptAdapter(nn.Module):
         image_features = self.projection(image_features)
         image_features = F.normalize(image_features, dim=-1)
         
-        # Get text prompts
+        # Get text prompts - use TextEncoder if available (like reference code)
         if label_indices is not None:
             # Select prompts based on labels
             selected_prompts = self.class_prompts[label_indices]  # [B, prompt_dim, clip_dim]
-            # Average over prompt dimension to get text embedding
-            text_features = selected_prompts.mean(dim=1)  # [B, clip_dim]
+            
+            if self.text_encoder is not None:
+                # Process prompts through CLIP's text encoder (like reference code)
+                text_features = self.text_encoder(selected_prompts)  # [B, clip_dim]
+            else:
+                # Fallback: average over prompt dimension
+                text_features = selected_prompts.mean(dim=1)  # [B, clip_dim]
         else:
             # Return all class prompts
-            text_features = self.class_prompts.mean(dim=1)  # [num_classes, clip_dim]
+            if self.text_encoder is not None:
+                # Process all prompts through text encoder
+                text_features = self.text_encoder(self.class_prompts)  # [num_classes, clip_dim]
+            else:
+                text_features = self.class_prompts.mean(dim=1)  # [num_classes, clip_dim]
         
         text_features = F.normalize(text_features, dim=-1)
         
@@ -176,6 +220,11 @@ class PromptAdapter(nn.Module):
     
     def get_text_embeddings(self, label_indices: torch.Tensor) -> torch.Tensor:
         """Get text embeddings for given labels."""
-        selected_prompts = self.class_prompts[label_indices]
-        text_features = selected_prompts.mean(dim=1)
+        selected_prompts = self.class_prompts[label_indices]  # [B, prompt_dim, clip_dim]
+        if self.text_encoder is not None:
+            # Process through text encoder (like reference code)
+            text_features = self.text_encoder(selected_prompts)  # [B, clip_dim]
+        else:
+            # Fallback: average
+            text_features = selected_prompts.mean(dim=1)  # [B, clip_dim]
         return F.normalize(text_features, dim=-1)

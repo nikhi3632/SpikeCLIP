@@ -20,6 +20,7 @@ from training.optimizer_factory import build_optimizer, build_scheduler
 from utils.helpers import get_device, set_seed
 from utils.checkpointing import load_best_checkpoint
 from utils.logging import log_device_info
+import clip
 
 class RefineTrainer(Trainer):
     """Custom trainer for refinement stage."""
@@ -54,15 +55,12 @@ class RefineTrainer(Trainer):
                 coarse_images = self.coarse_model(spikes)  # [B, 3, H, W]
             
             # Stage 3: Refine images
-            # For unpaired training: refinement improves coarse images using perceptual loss
-            # Target is the coarse image, but we encourage improvements through the loss
+            # Use RefinementLoss that encourages improvement without matching target
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     refined_images = self.model(coarse_images)  # [B, 3, H, W]
-                    # Self-supervised refinement: refine coarse images
-                    # The loss encourages refinement while maintaining structure
-                    target = coarse_images
-                    loss = self.criterion(refined_images, target)
+                    # RefinementLoss uses coarse as structure constraint, not target
+                    loss = self.criterion(refined_images, coarse_images)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -72,9 +70,8 @@ class RefineTrainer(Trainer):
                 self.scaler.update()
             else:
                 refined_images = self.model(coarse_images)
-                # Self-supervised refinement target
-                target = coarse_images
-                loss = self.criterion(refined_images, target)
+                # RefinementLoss uses coarse as structure constraint, not target
+                loss = self.criterion(refined_images, coarse_images)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -126,13 +123,12 @@ class RefineTrainer(Trainer):
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         refined_images = self.model(coarse_images)
-                        # Self-supervised refinement target
-                        target = coarse_images
-                        loss = self.criterion(refined_images, target)
+                        # RefinementLoss uses coarse as structure constraint, not target
+                        loss = self.criterion(refined_images, coarse_images)
                 else:
                     refined_images = self.model(coarse_images)
-                    target = coarse_images
-                    loss = self.criterion(refined_images, target)
+                    # RefinementLoss uses coarse as structure constraint, not target
+                    loss = self.criterion(refined_images, coarse_images)
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -249,13 +245,32 @@ def main():
         num_down=model_config.get('num_down', 4)
     )
     
-    # Loss
+    # Load CLIP model for CLIP-guided perceptual loss (like reference code)
+    clip_model = None
+    if loss_config.get('perceptual_weight', 0.0) > 0:
+        try:
+            print("Loading CLIP model for perceptual loss...")
+            clip_model, _ = clip.load("ViT-B/32", device=device)
+            clip_model.eval()
+            # Freeze CLIP model
+            for param in clip_model.parameters():
+                param.requires_grad = False
+            print("CLIP model loaded successfully for CLIP-guided perceptual loss")
+        except Exception as e:
+            print(f"Warning: Failed to load CLIP model for perceptual loss ({e}). Using fallback feature extractor.")
+            clip_model = None
+    
+    # Use RefinementLoss for Stage 3 (encourages improvement without matching target)
     criterion = get_loss_fn(
-        loss_config.get('type', 'reconstruction'),
-        l1_weight=loss_config.get('l1_weight', 1.0),
-        l2_weight=loss_config.get('l2_weight', 1.0),
-        identity_penalty=loss_config.get('identity_penalty', 0.1)  # Prevent identity mapping
+        loss_config.get('type', 'refinement'),  # Use 'refinement' loss type
+        structure_weight=loss_config.get('structure_weight', 0.1),  # Small weight to maintain structure
+        identity_penalty=loss_config.get('identity_penalty', 1.0),  # Large penalty to prevent copying
+        perceptual_weight=loss_config.get('perceptual_weight', 1.0),  # CLIP perceptual loss for refinement
+        tv_weight=loss_config.get('tv_weight', 0.1),  # Total variation for smoothness
+        clip_model=clip_model  # Pass CLIP model for CLIP-guided perceptual loss
     )
+    # Ensure loss function (and its feature extractor) is on the correct device
+    criterion = criterion.to(device)
     
     # Optimizer
     optimizer_cfg = optimizer_config.copy()

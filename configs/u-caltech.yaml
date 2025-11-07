@@ -102,12 +102,13 @@ refine:
     base_channels: 64
     num_down: 4  # Number of downsampling layers
   
-  # Loss parameters
+  # Loss parameters - RefinementLoss (encourages improvement without matching target)
   loss:
-    type: "reconstruction"
-    l1_weight: 1.0
-    l2_weight: 1.0
-    identity_penalty: 0.5  # Increased penalty to prevent identity mapping (encourages actual refinement)
+    type: "refinement"  # Use RefinementLoss instead of reconstruction
+    structure_weight: 0.1  # Small weight to maintain basic structure (not exact match)
+    identity_penalty: 1.0  # Large penalty to prevent identity mapping/copying
+    perceptual_weight: 1.0  # CLIP perceptual loss to encourage better features
+    tv_weight: 0.1  # Total variation loss for smoothness
   
   # Training parameters
   training:
