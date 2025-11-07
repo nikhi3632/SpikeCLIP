@@ -108,6 +108,8 @@ def main():
         l2_weight=loss_config.get('l2_weight', 1.0),
         perceptual_weight=loss_config.get('perceptual_weight', 0.0)
     )
+    # Ensure loss function (and its feature extractor) is on the correct device
+    criterion = criterion.to(device)
     
     # Optimizer
     optimizer_cfg = optimizer_config.copy()

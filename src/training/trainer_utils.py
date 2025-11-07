@@ -33,7 +33,8 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.optimizer = optimizer
-        self.criterion = criterion
+        # Ensure criterion (and any submodules like feature extractor) is on the correct device
+        self.criterion = criterion.to(device) if hasattr(criterion, 'to') else criterion
         self.device = device
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
