@@ -84,20 +84,17 @@ class Trainer:
                     # For unpaired training: use self-supervised reconstruction
                     # Target is a normalized version of spike temporal average
                     # This encourages the model to learn meaningful image structure from spikes
-                    # Use a more challenging target: weighted temporal average with variance
-                    # This encourages the model to learn more than just simple averaging
+                    # Self-supervised target: temporal average of spikes
+                    # For self-supervised learning, this is a reasonable proxy target
+                    # Low loss (~0.03-0.04) is expected - the key is verifying outputs are diverse
                     spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W] - temporal variance
-                    # Combine average and variance to make target more informative
-                    # Variance provides information about temporal dynamics
-                    target_combined = spike_avg + 0.1 * spike_var  # Weighted combination
-                    # Use global normalization across batch to make task more challenging
-                    target_min = target_combined.min()
-                    target_max = target_combined.max()
-                    target_range = target_max - target_min + 1e-8
-                    target = (target_combined - target_min) / target_range
-                    target = torch.clamp(target, 0, 1)
-                    target = target.repeat(1, 3, 1, 1)
+                    # Global normalization to preserve relative intensities
+                    spike_min = spike_avg.min()
+                    spike_max = spike_avg.max()
+                    spike_range = spike_max - spike_min + 1e-8
+                    spike_avg = (spike_avg - spike_min) / spike_range
+                    spike_avg = torch.clamp(spike_avg, 0, 1)
+                    target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
                 
                 self.scaler.scale(loss).backward()
@@ -108,19 +105,15 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(spikes)
-                # Self-supervised target: weighted temporal average with variance
-                # This makes the target more challenging and informative
+                # Self-supervised target: temporal average of spikes
                 spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W] - temporal variance
-                # Combine average and variance to make target more informative
-                target_combined = spike_avg + 0.1 * spike_var  # Weighted combination
-                # Global normalization across batch to preserve relative intensities
-                target_min = target_combined.min()
-                target_max = target_combined.max()
-                target_range = target_max - target_min + 1e-8
-                target = (target_combined - target_min) / target_range
-                target = torch.clamp(target, 0, 1)
-                target = target.repeat(1, 3, 1, 1)
+                # Global normalization to preserve relative intensities
+                spike_min = spike_avg.min()
+                spike_max = spike_avg.max()
+                spike_range = spike_max - spike_min + 1e-8
+                spike_avg = (spike_avg - spike_min) / spike_range
+                spike_avg = torch.clamp(spike_avg, 0, 1)
+                target = spike_avg.repeat(1, 3, 1, 1)
                 loss = self.criterion(outputs, target)
                 
                 loss.backward()
@@ -168,29 +161,25 @@ class Trainer:
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         outputs = self.model(spikes)
-                        # Self-supervised target: weighted temporal average with variance
+                        # Self-supervised target: temporal average of spikes
                         spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                        target_combined = spike_avg + 0.1 * spike_var
-                        target_min = target_combined.min()
-                        target_max = target_combined.max()
-                        target_range = target_max - target_min + 1e-8
-                        target = (target_combined - target_min) / target_range
-                        target = torch.clamp(target, 0, 1)
-                        target = target.repeat(1, 3, 1, 1)
+                        spike_min = spike_avg.min()
+                        spike_max = spike_avg.max()
+                        spike_range = spike_max - spike_min + 1e-8
+                        spike_avg = (spike_avg - spike_min) / spike_range
+                        spike_avg = torch.clamp(spike_avg, 0, 1)
+                        target = spike_avg.repeat(1, 3, 1, 1)
                         loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    # Self-supervised target: weighted temporal average with variance
+                    # Self-supervised target: temporal average of spikes
                     spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                    target_combined = spike_avg + 0.1 * spike_var
-                    target_min = target_combined.min()
-                    target_max = target_combined.max()
-                    target_range = target_max - target_min + 1e-8
-                    target = (target_combined - target_min) / target_range
-                    target = torch.clamp(target, 0, 1)
-                    target = target.repeat(1, 3, 1, 1)
+                    spike_min = spike_avg.min()
+                    spike_max = spike_avg.max()
+                    spike_range = spike_max - spike_min + 1e-8
+                    spike_avg = (spike_avg - spike_min) / spike_range
+                    spike_avg = torch.clamp(spike_avg, 0, 1)
+                    target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
                 
                 total_loss += loss.item()
