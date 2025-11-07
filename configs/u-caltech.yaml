@@ -26,18 +26,18 @@ coarse:
   
   # Training parameters
   training:
-    epochs: 10
+    epochs: 50  # Increased from 10 for better convergence
     batch_size: 8
-    learning_rate: 0.001
+    learning_rate: 0.0001  # Reduced from 0.001 to prevent mode collapse
     seed: 42
     use_amp: false
     grad_clip: 1.0
   
   # Optimizer configuration
   optimizer:
-    type: "adam"  # adam, adamw, sgd
-    lr: 0.001  # Can override training.learning_rate
-    weight_decay: 0.0
+    type: "adamw"  # Changed to AdamW for better regularization
+    lr: 0.0001  # Can override training.learning_rate
+    weight_decay: 0.0001  # Added weight decay to prevent collapse
     momentum: 0.9  # Only for SGD
   
   # Scheduler configuration

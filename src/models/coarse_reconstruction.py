@@ -25,10 +25,13 @@ class CoarseSNN(nn.Module):
         )
 
         # Decoder: deconvs back to full resolution
+        # Added batch normalization to prevent mode collapse
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),  # 56 -> 112
+            nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),  # 112 -> 224
+            nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
             nn.Conv2d(16, out_channels, kernel_size=3, padding=1),
         )
