@@ -82,6 +82,8 @@ def load_combined_model(checkpoint_path: str, device: torch.device) -> Tuple[Spi
     if unexpected_keys:
         print(f"Warning: Unexpected keys in checkpoint: {unexpected_keys}")
     
+    # Move model to device
+    model = model.to(device)
     model.eval()
     
     return model, checkpoint
