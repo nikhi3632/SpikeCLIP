@@ -156,6 +156,8 @@ def main():
         device=device,
         prefix='coarse'
     )
+    # Ensure model is on the correct device
+    model = model.to(device)
     model.eval()
     print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
     
