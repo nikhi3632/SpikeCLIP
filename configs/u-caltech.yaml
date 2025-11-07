@@ -105,8 +105,8 @@ refine:
   # Loss parameters - RefinementLoss (encourages improvement without matching target)
   loss:
     type: "refinement"  # Use RefinementLoss instead of reconstruction
-    identity_penalty: 10.0  # Very large penalty to prevent identity mapping/copying (no structure matching)
-    perceptual_weight: 1.0  # CLIP perceptual loss to encourage better features (self-supervised)
+    identity_penalty: 5.0  # Large penalty to prevent identity mapping/copying
+    perceptual_weight: 1.0  # CLIP perceptual loss to encourage better features
     tv_weight: 0.1  # Total variation loss for smoothness
   
   # Training parameters
