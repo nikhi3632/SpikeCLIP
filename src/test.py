@@ -1,7 +1,13 @@
 """loads combined_model.pth → visualize + metrics"""
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports (if run from subdirectory)
+if Path(__file__).parent.name != 'src':
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import argparse
-from pathlib import Path
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np

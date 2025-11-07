@@ -1,7 +1,12 @@
 """merges 3 best.pth → combined_model.pth"""
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import torch
 import argparse
-from pathlib import Path
 from typing import Dict, Any
 
 from models.coarse_reconstruction import CoarseSNN

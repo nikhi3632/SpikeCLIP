@@ -1,9 +1,14 @@
 """Stage 3 inference"""
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import os
 import torch
 import argparse
 import time
-from pathlib import Path
 from tqdm import tqdm
 import json
 
