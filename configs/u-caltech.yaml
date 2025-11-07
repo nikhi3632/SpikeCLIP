@@ -67,7 +67,7 @@ prompt:
   
   # Training parameters
   training:
-    epochs: 50
+    epochs: 10
     batch_size: 8
     learning_rate: 0.0001
     seed: 42
