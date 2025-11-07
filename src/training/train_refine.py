@@ -265,8 +265,7 @@ def main():
     # Use RefinementLoss for Stage 3 (encourages improvement without matching target)
     criterion = get_loss_fn(
         loss_config.get('type', 'refinement'),  # Use 'refinement' loss type
-        structure_weight=loss_config.get('structure_weight', 0.1),  # Small weight to maintain structure
-        identity_penalty=loss_config.get('identity_penalty', 1.0),  # Large penalty to prevent copying
+        identity_penalty=loss_config.get('identity_penalty', 10.0),  # Very large penalty to prevent copying
         perceptual_weight=loss_config.get('perceptual_weight', 1.0),  # CLIP perceptual loss for refinement
         tv_weight=loss_config.get('tv_weight', 0.1),  # Total variation for smoothness
         clip_model=clip_model  # Pass CLIP model for CLIP-guided perceptual loss

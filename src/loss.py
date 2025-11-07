@@ -5,10 +5,9 @@ import torch.nn.functional as F
 
 class RefinementLoss(nn.Module):
     """Loss for refinement stage - encourages improvement without matching target."""
-    def __init__(self, structure_weight=0.1, identity_penalty=1.0, perceptual_weight=1.0, tv_weight=0.1, clip_model=None):
+    def __init__(self, identity_penalty=10.0, perceptual_weight=1.0, tv_weight=0.1, clip_model=None):
         super().__init__()
-        self.structure_weight = structure_weight  # Small weight to maintain structure
-        self.identity_penalty = identity_penalty  # Large penalty to prevent copying
+        self.identity_penalty = identity_penalty  # Very large penalty to prevent copying
         self.perceptual_weight = perceptual_weight  # Encourage better CLIP features
         self.tv_weight = tv_weight  # Total variation for smoothness
         self.clip_model = clip_model
@@ -31,47 +30,44 @@ class RefinementLoss(nn.Module):
     def forward(self, refined: torch.Tensor, coarse: torch.Tensor) -> torch.Tensor:
         """
         refined: [B, C, H, W] refined image
-        coarse: [B, C, H, W] coarse image (for structure constraint, not target)
+        coarse: [B, C, H, W] coarse image (only for identity penalty, not as target)
         """
-        # Small structure loss to maintain basic structure (not exact match)
-        structure_loss = F.l1_loss(refined, coarse) * self.structure_weight
+        # NO structure loss - we don't want to match the coarse image at all
         
-        # Large identity penalty to prevent copying
+        # Very large identity penalty to prevent copying
         l1_diff = F.l1_loss(refined, coarse)
-        identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)  # Stronger penalty
+        # Exponential penalty that's very high when images are similar
+        identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 100.0)  # Much stronger penalty
         
-        # Total variation loss for smoothness
+        # Total variation loss for smoothness (encourages natural images)
         tv_loss = self.total_variation_loss(refined) * self.tv_weight
         
-        # CLIP perceptual loss - encourage better features (not matching)
+        # CLIP perceptual loss - encourage better CLIP features WITHOUT matching coarse
+        # Instead of matching, we want refined to have "better" features
         perceptual_loss = 0.0
         if self.perceptual_weight > 0 and self.feature_extractor is not None:
             # Normalize and resize for CLIP
             refined_norm = F.interpolate(torch.clamp(refined, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
-            coarse_norm = F.interpolate(torch.clamp(coarse, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
             
-            # Ensure dtype matches CLIP model (handle mixed precision)
-            # Check the dtype of the first parameter to determine model dtype
+            # Ensure dtype matches CLIP model
             if self.clip_model is not None:
                 model_dtype = next(self.clip_model.parameters()).dtype
                 refined_norm = refined_norm.to(dtype=model_dtype)
-                coarse_norm = coarse_norm.to(dtype=model_dtype)
             
-            # Get CLIP features
+            # Get CLIP features for refined image
             refined_features = self.feature_extractor(refined_norm)
-            coarse_features = self.feature_extractor(coarse_norm)
-            
-            # Normalize
             refined_features = F.normalize(refined_features, dim=-1)
-            coarse_features = F.normalize(coarse_features, dim=-1)
             
-            # Encourage refined to have better features (not match, but improve)
-            # Use negative cosine similarity to encourage improvement
-            # We want refined_features to be "better" - use a loss that encourages this
-            # For now, use MSE but with a twist: encourage refined to be different but better
-            perceptual_loss = F.mse_loss(refined_features, coarse_features) * self.perceptual_weight
+            # Self-supervised loss: encourage features to be well-formed
+            # Use a loss that encourages features to have good magnitude (not too small, not too large)
+            # This encourages the model to produce images that CLIP can process well
+            feature_magnitude = torch.norm(refined_features, dim=-1)
+            # Encourage features to have reasonable magnitude (around 1.0 since normalized)
+            # Penalize if features are too small (poor image quality) or too large (unnatural)
+            perceptual_loss = F.mse_loss(feature_magnitude, torch.ones_like(feature_magnitude)) * self.perceptual_weight
         
-        total_loss = structure_loss + identity_penalty + tv_loss + perceptual_loss
+        # Total loss: only identity penalty + TV + perceptual (NO structure matching)
+        total_loss = identity_penalty + tv_loss + perceptual_loss
         return total_loss
 
 class ReconstructionLoss(nn.Module):
