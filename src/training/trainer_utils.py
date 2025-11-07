@@ -79,11 +79,14 @@ class Trainer:
             
             if self.use_amp:
                 with torch.cuda.amp.autocast():
-                    outputs = self.model(spikes)
-                    # For coarse stage, we need a target image
-                    # Assuming we don't have ground truth images, we'll use spikes as proxy
-                    # This is a placeholder - adjust based on your actual training setup
-                    target = spikes.mean(dim=1, keepdim=True).repeat(1, 3, 1, 1)
+                    outputs = self.model(spikes)  # [B, 3, H, W]
+                    # For unpaired training: use self-supervised reconstruction
+                    # Target is a normalized version of spike temporal average
+                    # This encourages the model to learn meaningful image structure from spikes
+                    spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                    # Normalize to [0, 1] range and repeat to 3 channels
+                    spike_avg = torch.clamp(spike_avg, 0, 1)
+                    target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
                 
                 self.scaler.scale(loss).backward()
@@ -94,7 +97,10 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(spikes)
-                target = spikes.mean(dim=1, keepdim=True).repeat(1, 3, 1, 1)
+                # Self-supervised target: normalized spike average
+                spike_avg = spikes.mean(dim=1, keepdim=True)
+                spike_avg = torch.clamp(spike_avg, 0, 1)
+                target = spike_avg.repeat(1, 3, 1, 1)
                 loss = self.criterion(outputs, target)
                 
                 loss.backward()
@@ -142,11 +148,16 @@ class Trainer:
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         outputs = self.model(spikes)
-                        target = spikes.mean(dim=1, keepdim=True).repeat(1, 3, 1, 1)
+                        # Self-supervised target: normalized spike average
+                        spike_avg = spikes.mean(dim=1, keepdim=True)
+                        spike_avg = torch.clamp(spike_avg, 0, 1)
+                        target = spike_avg.repeat(1, 3, 1, 1)
                         loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    target = spikes.mean(dim=1, keepdim=True).repeat(1, 3, 1, 1)
+                    spike_avg = spikes.mean(dim=1, keepdim=True)
+                    spike_avg = torch.clamp(spike_avg, 0, 1)
+                    target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
                 
                 total_loss += loss.item()

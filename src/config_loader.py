@@ -24,4 +24,22 @@ def load_config(config_path: str) -> Dict[str, Any]:
         if field not in config:
             raise ValueError(f"Missing required field in config: {field}")
     
+    # Validate labels
+    if not isinstance(config['labels'], list) or len(config['labels']) == 0:
+        raise ValueError("Config must contain a non-empty 'labels' list")
+    
+    # Validate data directory exists
+    data_dir = Path(config['data_dir'])
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
+    
+    # Validate stage configurations
+    for stage in ['coarse', 'prompt', 'refine']:
+        if stage in config:
+            stage_config = config[stage]
+            if 'model' not in stage_config:
+                raise ValueError(f"Stage '{stage}' missing 'model' configuration")
+            if 'training' not in stage_config:
+                raise ValueError(f"Stage '{stage}' missing 'training' configuration")
+    
     return config

@@ -49,11 +49,13 @@ class RefineTrainer(Trainer):
                 coarse_images = self.coarse_model(spikes)  # [B, 3, H, W]
             
             # Stage 3: Refine images
+            # For unpaired training: refinement improves coarse images using perceptual loss
+            # Target is the coarse image, but we encourage improvements through the loss
             if self.use_amp:
                 with torch.cuda.amp.autocast():
                     refined_images = self.model(coarse_images)  # [B, 3, H, W]
-                    # Target is the coarse image (self-supervised refinement)
-                    # Or could use a better target if available
+                    # Self-supervised refinement: refine coarse images
+                    # The loss encourages refinement while maintaining structure
                     target = coarse_images
                     loss = self.criterion(refined_images, target)
                 
@@ -65,6 +67,7 @@ class RefineTrainer(Trainer):
                 self.scaler.update()
             else:
                 refined_images = self.model(coarse_images)
+                # Self-supervised refinement target
                 target = coarse_images
                 loss = self.criterion(refined_images, target)
                 
@@ -118,6 +121,7 @@ class RefineTrainer(Trainer):
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         refined_images = self.model(coarse_images)
+                        # Self-supervised refinement target
                         target = coarse_images
                         loss = self.criterion(refined_images, target)
                 else:
@@ -215,13 +219,19 @@ def main():
     
     # Load coarse checkpoint
     coarse_checkpoint_dir = Path(args.coarse_checkpoint)
+    if not coarse_checkpoint_dir.exists():
+        raise FileNotFoundError(f"Coarse checkpoint directory not found: {coarse_checkpoint_dir}")
+    
     print(f"Loading coarse model from {coarse_checkpoint_dir}")
-    load_best_checkpoint(
-        str(coarse_checkpoint_dir),
-        coarse_model,
-        device=device,
-        prefix='coarse'
-    )
+    try:
+        load_best_checkpoint(
+            str(coarse_checkpoint_dir),
+            coarse_model,
+            device=device,
+            prefix='coarse'
+        )
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Failed to load coarse checkpoint: {e}. Make sure Stage 1 is trained first.")
     coarse_model.eval()
     for param in coarse_model.parameters():
         param.requires_grad = False

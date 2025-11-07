@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
+import clip
 
 class PromptAdapter(nn.Module):
     """
@@ -19,59 +20,113 @@ class PromptAdapter(nn.Module):
         clip_dim: int = 512,
         num_classes: int = 101,
         prompt_dim: int = 77,
-        freeze_image_encoder: bool = True
+        freeze_image_encoder: bool = True,
+        clip_model_name: str = "ViT-B/32"
     ):
         super().__init__()
         self.clip_dim = clip_dim
         self.num_classes = num_classes
         self.prompt_dim = prompt_dim
         
-        # Image encoder (frozen CLIP vision encoder or trainable adapter)
-        if image_encoder is not None:
-            self.image_encoder = image_encoder
+        # Load actual CLIP model
+        try:
+            # Load CLIP model on CPU first, will be moved to device later
+            self.clip_model, self.clip_preprocess = clip.load(clip_model_name, device="cpu")
+            self.clip_model.eval()
+            
+            # Get actual CLIP dimensions
+            with torch.no_grad():
+                dummy_image = torch.zeros(1, 3, 224, 224)
+                dummy_text = clip.tokenize(["a"])
+                image_features = self.clip_model.encode_image(dummy_image)
+                text_features = self.clip_model.encode_text(dummy_text)
+                actual_image_dim = image_features.shape[-1]
+                actual_text_dim = text_features.shape[-1]
+            
+            # Use CLIP's image encoder
+            if image_encoder is not None:
+                self.image_encoder = image_encoder
+            else:
+                self.image_encoder = self.clip_model.visual
+                
             if freeze_image_encoder:
                 for param in self.image_encoder.parameters():
                     param.requires_grad = False
-        else:
-            # Simple adapter if no CLIP encoder provided
-            self.image_encoder = nn.Sequential(
-                nn.AdaptiveAvgPool2d((7, 7)),
-                nn.Flatten(),
-                nn.Linear(3 * 7 * 7, 512),
-                nn.ReLU(),
-                nn.Linear(512, clip_dim)
-            )
+            
+            # Update clip_dim to match actual CLIP dimensions
+            self.clip_dim = actual_image_dim
+            
+        except Exception as e:
+            print(f"Warning: Failed to load CLIP model ({e}). Using fallback adapter.")
+            # Fallback to simple adapter if CLIP loading fails
+            if image_encoder is not None:
+                self.image_encoder = image_encoder
+            else:
+                self.image_encoder = nn.Sequential(
+                    nn.AdaptiveAvgPool2d((7, 7)),
+                    nn.Flatten(),
+                    nn.Linear(3 * 7 * 7, 512),
+                    nn.ReLU(),
+                    nn.Linear(512, clip_dim)
+                )
+            self.clip_model = None
         
         # Learnable text prompts (one per class)
-        self.class_prompts = nn.Parameter(torch.randn(num_classes, prompt_dim, clip_dim))
+        # Each prompt is a learnable embedding that will be processed by CLIP's text encoder
+        # Format: [num_classes, prompt_dim] where prompt_dim is the token sequence length
+        self.class_prompts = nn.Parameter(torch.randn(num_classes, prompt_dim, self.clip_dim))
         nn.init.normal_(self.class_prompts, std=0.02)
         
-        # Projection to match CLIP dimensions
+        # Projection to match CLIP dimensions (for images)
         self.projection = nn.Sequential(
-            nn.Linear(clip_dim, clip_dim),
-            nn.LayerNorm(clip_dim),
+            nn.Linear(self.clip_dim, self.clip_dim),
+            nn.LayerNorm(self.clip_dim),
             nn.GELU(),
-            nn.Linear(clip_dim, clip_dim)
+            nn.Linear(self.clip_dim, self.clip_dim)
         )
+    
+    def _apply(self, fn):
+        """Override _apply to also move CLIP model when model is moved to device."""
+        super()._apply(fn)
+        if self.clip_model is not None:
+            # Move CLIP model to the same device
+            self.clip_model = self.clip_model._apply(fn)
+        return self
     
     def forward(self, images: torch.Tensor, label_indices: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
-        images: [B, 3, H, W] coarse reconstructed images
+        images: [B, 3, H, W] coarse reconstructed images (should be in [0, 1] range)
         label_indices: [B] optional label indices for prompt selection
-        Returns: [B, clip_dim] or [B, num_classes, clip_dim] if label_indices not provided
+        Returns: (image_features, text_features) where both are normalized
         """
-        # Encode images
-        image_features = self.image_encoder(images)  # [B, clip_dim]
-        image_features = F.normalize(image_features, dim=-1)
+        # Normalize images to CLIP's expected range [-1, 1] if using actual CLIP
+        if self.clip_model is not None:
+            # CLIP expects images in [0, 1] range, but we normalize to [-1, 1]
+            # Actually, CLIP's preprocess does this, but we'll handle it here
+            images_normalized = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
+            # CLIP visual encoder expects [0, 1] range
+            images_normalized = torch.clamp(images_normalized, 0, 1)
+        else:
+            images_normalized = images
         
-        # Project to CLIP space
+        # Encode images using CLIP or adapter
+        if self.clip_model is not None:
+            image_features = self.image_encoder(images_normalized)  # [B, clip_dim]
+            # CLIP already normalizes, but we'll normalize again for consistency
+            image_features = F.normalize(image_features, dim=-1)
+        else:
+            image_features = self.image_encoder(images_normalized)
+            image_features = F.normalize(image_features, dim=-1)
+        
+        # Project to CLIP space (optional refinement)
         image_features = self.projection(image_features)
+        image_features = F.normalize(image_features, dim=-1)
         
         # Get text prompts
         if label_indices is not None:
             # Select prompts based on labels
             selected_prompts = self.class_prompts[label_indices]  # [B, prompt_dim, clip_dim]
-            # Average over prompt dimension
+            # Average over prompt dimension to get text embedding
             text_features = selected_prompts.mean(dim=1)  # [B, clip_dim]
         else:
             # Return all class prompts
@@ -83,9 +138,17 @@ class PromptAdapter(nn.Module):
     
     def get_clip_features(self, images: torch.Tensor) -> torch.Tensor:
         """Get CLIP-aligned image features."""
-        image_features = self.image_encoder(images)
+        # Normalize images for CLIP
+        if self.clip_model is not None:
+            images_normalized = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
+            images_normalized = torch.clamp(images_normalized, 0, 1)
+        else:
+            images_normalized = images
+            
+        image_features = self.image_encoder(images_normalized)
         image_features = F.normalize(image_features, dim=-1)
         image_features = self.projection(image_features)
+        image_features = F.normalize(image_features, dim=-1)
         return image_features
     
     def get_text_embeddings(self, label_indices: torch.Tensor) -> torch.Tensor:

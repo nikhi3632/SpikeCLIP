@@ -3,3 +3,4 @@
 /outputs_viz
 /venv
 lambda-labs-key.pem
+.env

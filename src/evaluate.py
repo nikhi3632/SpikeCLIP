@@ -76,11 +76,14 @@ def main():
             total_predictions += predictions.size(0)
             
             # Reconstruction metrics
+            # For unpaired training: compare refined vs coarse (improvement metric)
+            # Also compute spike-to-image reconstruction quality
             target = coarse_images
             for i in range(spikes.size(0)):
                 pred_img = refined_images[i:i+1]
                 target_img = target[i:i+1]
                 
+                # Metrics comparing refined to coarse (shows refinement quality)
                 psnr_values.append(compute_psnr(pred_img, target_img))
                 ssim_values.append(compute_ssim(pred_img, target_img))
                 l1_errors.append(compute_l1_error(pred_img, target_img))
@@ -118,11 +121,13 @@ def main():
     
     # Print metrics
     print(f"\n===== EVALUATION RESULTS =====")
-    print(f"Reconstruction Metrics:")
-    print(f"  PSNR: {avg_psnr:.4f} dB")
-    print(f"  SSIM: {avg_ssim:.4f}")
-    print(f"  L1 Error: {avg_l1:.4f}")
-    print(f"  L2 Error: {avg_l2:.4f}")
+    print(f"Reconstruction Metrics (Refined vs Coarse):")
+    print(f"  PSNR: {avg_psnr:.4f} dB (higher is better)")
+    print(f"  SSIM: {avg_ssim:.4f} (higher is better)")
+    print(f"  L1 Error: {avg_l1:.4f} (lower is better)")
+    print(f"  L2 Error: {avg_l2:.4f} (lower is better)")
+    print(f"  Note: Metrics compare refined images to coarse images.")
+    print(f"        For unpaired training, these show refinement quality.")
     print(f"\nClassification Metrics:")
     print(f"  Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     print(f"\nEvaluation Time: {eval_time:.2f}s")

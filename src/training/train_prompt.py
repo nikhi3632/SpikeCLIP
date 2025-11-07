@@ -214,13 +214,19 @@ def main():
     
     # Load coarse checkpoint
     coarse_checkpoint_dir = Path(args.coarse_checkpoint)
+    if not coarse_checkpoint_dir.exists():
+        raise FileNotFoundError(f"Coarse checkpoint directory not found: {coarse_checkpoint_dir}")
+    
     print(f"Loading coarse model from {coarse_checkpoint_dir}")
-    load_best_checkpoint(
-        str(coarse_checkpoint_dir),
-        coarse_model,
-        device=device,
-        prefix='coarse'
-    )
+    try:
+        load_best_checkpoint(
+            str(coarse_checkpoint_dir),
+            coarse_model,
+            device=device,
+            prefix='coarse'
+        )
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Failed to load coarse checkpoint: {e}. Make sure Stage 1 is trained first.")
     coarse_model.eval()
     for param in coarse_model.parameters():
         param.requires_grad = False

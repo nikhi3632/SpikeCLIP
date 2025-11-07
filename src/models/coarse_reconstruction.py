@@ -35,16 +35,31 @@ class CoarseSNN(nn.Module):
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
-        spikes: [B, T, H, W]
+        Forward pass through SNN encoder-decoder.
+        
+        Args:
+            spikes: [B, T, H, W] input spike tensor
+        
+        Returns:
+            images: [B, 3, H, W] reconstructed images in [0, 1] range
         """
         # Reset SNN state each forward so batches are independent
         functional.reset_net(self)
 
-        # Temporal aggregation as coarse image proxy
+        # Temporal aggregation: average spikes over time dimension
+        # This provides a coarse intensity estimate from spike events
         # [B, T, H, W] -> [B, 1, H, W]
+        # Note: For a more sophisticated SNN, we could process temporal sequences
+        # through the network, but averaging is a reasonable baseline
         x = spikes.mean(dim=1, keepdim=True)
+        
+        # Normalize to [0, 1] range for better training stability
+        x = torch.clamp(x, 0, 1)
 
+        # Encode through SNN layers (with LIF neurons)
         x = self.encoder(x)
+        
+        # Decode to full resolution
         x = self.decoder(x)
 
         # Bound outputs to [0, 1] so images are viewable

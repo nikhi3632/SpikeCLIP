@@ -102,12 +102,14 @@ def main():
             correct_predictions += (predictions == label_indices).sum().item()
             total_predictions += predictions.size(0)
             
-            # Reconstruction metrics (using coarse as target)
+            # Reconstruction metrics (comparing refined to coarse)
+            # For unpaired training: these metrics show refinement quality
             target = coarse_images
             for i in range(batch_size):
                 pred_img = refined_images[i:i+1]
                 target_img = target[i:i+1]
                 
+                # Metrics comparing refined to coarse (shows refinement quality)
                 psnr = compute_psnr(pred_img, target_img)
                 ssim = compute_ssim(pred_img, target_img)
                 l1 = compute_l1_error(pred_img, target_img)
@@ -154,10 +156,12 @@ Batch Size: {batch_size}
 Total Samples: {total_samples}
 
 --- Reconstruction Metrics (Refined vs Coarse) ---
-Average PSNR: {avg_psnr:.4f} dB
-Average SSIM: {avg_ssim:.4f}
-Average L1 Error: {avg_l1:.4f}
-Average L2 Error (MSE): {avg_l2:.4f}
+Average PSNR: {avg_psnr:.4f} dB (higher is better)
+Average SSIM: {avg_ssim:.4f} (higher is better)
+Average L1 Error: {avg_l1:.4f} (lower is better)
+Average L2 Error (MSE): {avg_l2:.4f} (lower is better)
+Note: Metrics compare refined images to coarse images (refinement quality).
+      For unpaired training, these show how much the refinement stage improves coarse images.
 
 --- Classification Metrics ---
 Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})

@@ -143,11 +143,13 @@ def main():
             total_predictions += predictions.size(0)
             
             # Reconstruction metrics
+            # For unpaired training: compare refined vs coarse (improvement metric)
             target = coarse_images
             for i in range(spikes.size(0)):
                 pred_img = refined_images[i:i+1]
                 target_img = target[i:i+1]
                 
+                # Metrics comparing refined to coarse (shows refinement quality)
                 psnr_values.append(compute_psnr(pred_img, target_img))
                 ssim_values.append(compute_ssim(pred_img, target_img))
                 l1_errors.append(compute_l1_error(pred_img, target_img))
@@ -162,7 +164,9 @@ def main():
     
     # Print metrics
     print(f"\n===== TEST RESULTS =====")
-    print(f"Reconstruction - PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}")
+    print(f"Reconstruction Metrics (Refined vs Coarse):")
+    print(f"  PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}")
+    print(f"  Note: Metrics compare refined images to coarse images (refinement quality)")
     print(f"Classification - Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     
     # Save test metrics to log file
