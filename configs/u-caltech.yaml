@@ -68,7 +68,7 @@ prompt:
   
   # Training parameters
   training:
-    epochs: 50  # Increased from 10 for better convergence
+    epochs: 25  # Increased from 10 for better convergence
     batch_size: 8
     learning_rate: 0.0005  # Increased from 0.0001 for faster learning
     seed: 42
@@ -107,11 +107,11 @@ refine:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    identity_penalty: 0.1  # Penalty to prevent identity mapping (encourages actual refinement)
+    identity_penalty: 0.5  # Increased penalty to prevent identity mapping (encourages actual refinement)
   
   # Training parameters
   training:
-    epochs: 10
+    epochs: 20  # Increased from 10 to allow more learning
     batch_size: 8
     learning_rate: 0.0001
     seed: 42
