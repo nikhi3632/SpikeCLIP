@@ -25,8 +25,8 @@ SSH_KEY ?= lamdba_labs_key.pem
 HOST ?= user@remote_ip
 REMOTE_DIR ?= ~/spike-clip
 
-.PHONY: help clean data test train-coarse train-prompt train-refine train-all \
-        infer-coarse infer-prompt infer-refine infer-pipeline \
+.PHONY: help clean data test train-coarse train-prompt train-refine train \
+        infer-coarse infer-prompt infer-refine infer \
         combine-checkpoints evaluate login sync-up sync-down
 
 # Default target
@@ -136,7 +136,7 @@ train-refine:
 	@echo "Note: Requires trained coarse checkpoint. Use --coarse-checkpoint to specify."
 	@cd src && python3 training/train_refine.py --config ../$(CONFIG) --coarse-checkpoint outputs/checkpoints/ucaltech
 
-train-all:
+train:
 	@echo "Training all stages sequentially..."
 	@cd src && python3 train.py --config ../$(CONFIG) --stage all
 
@@ -157,7 +157,7 @@ infer-refine:
 		--coarse-checkpoint-dir outputs/checkpoints/ucaltech \
 		--refine-checkpoint-dir outputs/checkpoints/ucaltech
 
-infer-pipeline:
+infer:
 	@echo "Running end-to-end pipeline inference..."
 	@cd src && python3 inference/infer_pipeline.py --config ../$(CONFIG) \
 		--checkpoint outputs/checkpoints/ucaltech/combined_model.pth
