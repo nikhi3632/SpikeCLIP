@@ -174,6 +174,12 @@ test:
 	@cd src && python3 test.py --config ../$(CONFIG) \
 		--checkpoint outputs/checkpoints/ucaltech/combined_model.pth
 
+visualize-coarse:
+	@echo "Visualizing Stage 1 (Coarse Reconstruction) outputs..."
+	@cd src && python3 visualize_coarse.py --config ../$(CONFIG) \
+		--checkpoint-dir outputs/checkpoints/ucaltech \
+		--num-samples 10
+
 # Remove Python bytecode caches and compiled files across the repo
 clean:
 	@echo "Cleaning __pycache__ directories and *.pyc/*.pyo files..."
