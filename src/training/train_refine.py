@@ -251,6 +251,8 @@ def main():
         try:
             print("Loading CLIP model for perceptual loss...")
             clip_model, _ = clip.load("ViT-B/32", device=device)
+            # Ensure CLIP model is in float32 (not half precision) to avoid dtype mismatches
+            clip_model = clip_model.float()
             clip_model.eval()
             # Freeze CLIP model
             for param in clip_model.parameters():

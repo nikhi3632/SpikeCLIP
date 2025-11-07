@@ -50,6 +50,13 @@ class RefinementLoss(nn.Module):
             refined_norm = F.interpolate(torch.clamp(refined, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
             coarse_norm = F.interpolate(torch.clamp(coarse, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
             
+            # Ensure dtype matches CLIP model (handle mixed precision)
+            # Check the dtype of the first parameter to determine model dtype
+            if self.clip_model is not None:
+                model_dtype = next(self.clip_model.parameters()).dtype
+                refined_norm = refined_norm.to(dtype=model_dtype)
+                coarse_norm = coarse_norm.to(dtype=model_dtype)
+            
             # Get CLIP features
             refined_features = self.feature_extractor(refined_norm)
             coarse_features = self.feature_extractor(coarse_norm)
