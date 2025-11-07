@@ -113,15 +113,15 @@ refine:
   training:
     epochs: 20  # Increased from 10 to allow more learning
     batch_size: 8
-    learning_rate: 0.0001
+    learning_rate: 0.0005  # Increased from 0.0001 to escape local minima faster
     seed: 42
     use_amp: false
     grad_clip: 1.0
   
   # Optimizer configuration
   optimizer:
-    type: "adam"  # adam, adamw, sgd
-    lr: 0.0001  # Can override training.learning_rate
+    type: "adamw"  # Changed to AdamW for better generalization
+    lr: 0.0005  # Can override training.learning_rate
     weight_decay: 0.0001
     momentum: 0.9  # Only for SGD
   
