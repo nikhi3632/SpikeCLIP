@@ -14,31 +14,69 @@ class CoarseSNN(nn.Module):
         super().__init__()
         self.time_steps = time_steps
 
-        # Simple 2D encoder with LIF nodes
-        self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=3, padding=1),
+        # Enhanced encoder with more capacity
+        # Layer 1: 224x224 -> 224x224
+        self.enc1 = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),  # 224 -> 112
+        )
+        # Layer 2: 224x224 -> 112x112
+        self.enc2 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(64),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # 112 -> 56
+        )
+        # Layer 3: 112x112 -> 56x56
+        self.enc3 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+        )
+        # Layer 4: 56x56 -> 28x28
+        self.enc4 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(256),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
 
-        # Decoder: deconvs back to full resolution
-        # Added batch normalization to prevent mode collapse
-        self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),  # 56 -> 112
+        # Bottleneck
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+        )
+
+        # Decoder with skip connections (U-Net style)
+        # Layer 4: 28x28 -> 56x56
+        self.dec4 = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+        )
+        # Layer 3: 56x56 -> 112x112
+        self.dec3 = nn.Sequential(
+            nn.ConvTranspose2d(256, 64, kernel_size=4, stride=2, padding=1),  # 128*2 from skip
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+        )
+        # Layer 2: 112x112 -> 224x224
+        self.dec2 = nn.Sequential(
+            nn.ConvTranspose2d(128, 32, kernel_size=4, stride=2, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1),  # 112 -> 224
-            nn.BatchNorm2d(16),
+        )
+        # Final layer: 224x224 -> 224x224
+        self.dec1 = nn.Sequential(
+            nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32*2 from skip
+            nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
-            nn.Conv2d(16, out_channels, kernel_size=3, padding=1),
+            nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
         )
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through SNN encoder-decoder.
+        Forward pass through SNN encoder-decoder with skip connections.
         
         Args:
             spikes: [B, T, H, W] input spike tensor
@@ -59,11 +97,26 @@ class CoarseSNN(nn.Module):
         # Normalize to [0, 1] range for better training stability
         x = torch.clamp(x, 0, 1)
 
-        # Encode through SNN layers (with LIF neurons)
-        x = self.encoder(x)
+        # Encoder with skip connections
+        e1 = self.enc1(x)      # [B, 32, 224, 224]
+        e2 = self.enc2(e1)      # [B, 64, 112, 112]
+        e3 = self.enc3(e2)      # [B, 128, 56, 56]
+        e4 = self.enc4(e3)      # [B, 256, 28, 28]
         
-        # Decode to full resolution
-        x = self.decoder(x)
+        # Bottleneck
+        b = self.bottleneck(e4)  # [B, 256, 28, 28]
+        
+        # Decoder with skip connections (U-Net style)
+        d4 = self.dec4(b)       # [B, 128, 56, 56]
+        d4 = torch.cat([d4, e3], dim=1)  # [B, 256, 56, 56] - skip connection
+        
+        d3 = self.dec3(d4)      # [B, 64, 112, 112]
+        d3 = torch.cat([d3, e2], dim=1)  # [B, 128, 112, 112] - skip connection
+        
+        d2 = self.dec2(d3)      # [B, 32, 224, 224]
+        d2 = torch.cat([d2, e1], dim=1)  # [B, 64, 224, 224] - skip connection
+        
+        x = self.dec1(d2)       # [B, 3, 224, 224]
 
         # Bound outputs to [0, 1] so images are viewable
         x = torch.sigmoid(x)
