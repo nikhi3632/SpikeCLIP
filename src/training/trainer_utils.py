@@ -84,7 +84,12 @@ class Trainer:
                     # Target is a normalized version of spike temporal average
                     # This encourages the model to learn meaningful image structure from spikes
                     spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    # Normalize to [0, 1] range and repeat to 3 channels
+                    # Normalize to [0, 1] range with better scaling to preserve diversity
+                    # Use percentile-based normalization to prevent collapse
+                    spike_min = spike_avg.view(spike_avg.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_max = spike_avg.view(spike_avg.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_range = spike_max - spike_min + 1e-8  # Avoid division by zero
+                    spike_avg = (spike_avg - spike_min) / spike_range  # Per-sample normalization
                     spike_avg = torch.clamp(spike_avg, 0, 1)
                     target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
@@ -97,8 +102,14 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(spikes)
-                # Self-supervised target: normalized spike average
-                spike_avg = spikes.mean(dim=1, keepdim=True)
+                # Self-supervised target: normalized spike average with per-sample scaling
+                # This preserves diversity across samples and prevents mode collapse
+                spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                # Per-sample normalization to preserve diversity
+                spike_min = spike_avg.view(spike_avg.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                spike_max = spike_avg.view(spike_avg.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                spike_range = spike_max - spike_min + 1e-8  # Avoid division by zero
+                spike_avg = (spike_avg - spike_min) / spike_range  # Per-sample normalization
                 spike_avg = torch.clamp(spike_avg, 0, 1)
                 target = spike_avg.repeat(1, 3, 1, 1)
                 loss = self.criterion(outputs, target)
@@ -148,14 +159,25 @@ class Trainer:
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         outputs = self.model(spikes)
-                        # Self-supervised target: normalized spike average
-                        spike_avg = spikes.mean(dim=1, keepdim=True)
+                        # Self-supervised target: normalized spike average with per-sample scaling
+                        spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                        # Per-sample normalization to preserve diversity
+                        spike_min = spike_avg.view(spike_avg.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                        spike_max = spike_avg.view(spike_avg.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                        spike_range = spike_max - spike_min + 1e-8
+                        spike_avg = (spike_avg - spike_min) / spike_range
                         spike_avg = torch.clamp(spike_avg, 0, 1)
                         target = spike_avg.repeat(1, 3, 1, 1)
                         loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    spike_avg = spikes.mean(dim=1, keepdim=True)
+                    # Self-supervised target: normalized spike average with per-sample scaling
+                    spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                    # Per-sample normalization to preserve diversity
+                    spike_min = spike_avg.view(spike_avg.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_max = spike_avg.view(spike_avg.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_range = spike_max - spike_min + 1e-8
+                    spike_avg = (spike_avg - spike_min) / spike_range
                     spike_avg = torch.clamp(spike_avg, 0, 1)
                     target = spike_avg.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
