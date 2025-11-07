@@ -4,3 +4,4 @@
 /venv
 lambda-labs-key.pem
 .env
+src/outputs

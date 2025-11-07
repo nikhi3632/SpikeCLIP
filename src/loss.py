@@ -5,10 +5,11 @@ import torch.nn.functional as F
 
 class ReconstructionLoss(nn.Module):
     """L1 + L2 loss for image reconstruction."""
-    def __init__(self, l1_weight=1.0, l2_weight=1.0):
+    def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0):
         super().__init__()
         self.l1_weight = l1_weight
         self.l2_weight = l2_weight
+        self.identity_penalty = identity_penalty
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -17,7 +18,21 @@ class ReconstructionLoss(nn.Module):
         """
         l1_loss = F.l1_loss(pred, target)
         l2_loss = F.mse_loss(pred, target)
-        return self.l1_weight * l1_loss + self.l2_weight * l2_loss
+        reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss
+        
+        # Add penalty for identity mapping (when pred == target)
+        # This encourages the model to actually refine, not just copy
+        if self.identity_penalty > 0:
+            # Penalize when prediction is too similar to target
+            # We want some difference to encourage refinement
+            # Use a smooth penalty that increases as pred approaches target
+            l1_diff = F.l1_loss(pred, target)
+            # Penalty is high when l1_diff is very small (identity mapping)
+            # Penalty decreases as l1_diff increases (actual refinement)
+            identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 20.0)
+            reconstruction_loss = reconstruction_loss + identity_penalty
+        
+        return reconstruction_loss
 
 class CLIPLoss(nn.Module):
     """CLIP contrastive loss for image-text alignment."""
@@ -47,7 +62,9 @@ class CLIPLoss(nn.Module):
 def get_loss_fn(loss_type: str = "reconstruction", **kwargs):
     """Factory function to get loss function."""
     if loss_type == "reconstruction":
-        return ReconstructionLoss(**kwargs)
+        # Filter out identity_penalty for coarse stage (only use for refinement)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'identity_penalty' or v > 0}
+        return ReconstructionLoss(**filtered_kwargs)
     elif loss_type == "clip":
         return CLIPLoss(**kwargs)
     else:

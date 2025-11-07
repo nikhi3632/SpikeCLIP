@@ -90,10 +90,7 @@ sync-up:
 		--exclude='*.pyc' \
 		--exclude='.git/' \
 		--exclude='data/' \
-		--exclude='outputs/' \
 		--exclude='.env' \
-		--exclude='*.pth' \
-		--exclude='*.pkl' \
 		./ "$(HOST):$(REMOTE_DIR)/"
 
 # Sync remote to local (download)
@@ -110,10 +107,7 @@ sync-down:
 		--exclude='*.pyc' \
 		--exclude='.git/' \
 		--exclude='data/' \
-		--exclude='outputs/' \
 		--exclude='.env' \
-		--exclude='*.pth' \
-		--exclude='*.pkl' \
 		"$(HOST):$(REMOTE_DIR)/" ./
 
 # Fetch data using fetch_data.py

@@ -245,7 +245,8 @@ def main():
         clip_dim=model_config.get('clip_dim', 512),
         num_classes=num_classes,
         prompt_dim=model_config.get('prompt_dim', 77),
-        freeze_image_encoder=model_config.get('freeze_image_encoder', True)
+        freeze_image_encoder=model_config.get('freeze_image_encoder', True),
+        class_labels=labels  # Pass labels for better initialization
     )
     
     # Loss

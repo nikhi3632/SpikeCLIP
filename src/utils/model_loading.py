@@ -59,7 +59,8 @@ def load_combined_model(checkpoint_path: str, device: torch.device) -> Tuple[Spi
         clip_dim=model_config.get('clip_dim', 512),
         num_classes=num_classes,
         prompt_dim=model_config.get('prompt_dim', 77),
-        freeze_image_encoder=model_config.get('freeze_image_encoder', True)
+        freeze_image_encoder=model_config.get('freeze_image_encoder', True),
+        class_labels=labels  # Pass labels for better initialization
     )
     
     # Stage 3

@@ -21,7 +21,8 @@ class PromptAdapter(nn.Module):
         num_classes: int = 101,
         prompt_dim: int = 77,
         freeze_image_encoder: bool = True,
-        clip_model_name: str = "ViT-B/32"
+        clip_model_name: str = "ViT-B/32",
+        class_labels: Optional[list] = None
     ):
         super().__init__()
         self.clip_dim = clip_dim
@@ -71,11 +72,33 @@ class PromptAdapter(nn.Module):
                 )
             self.clip_model = None
         
+        # Initialize learnable text prompts from actual CLIP text embeddings
+        # This provides better initialization than random
+        if self.clip_model is not None and class_labels is not None and len(class_labels) == num_classes:
+            # Initialize from actual CLIP text embeddings
+            with torch.no_grad():
+                # Create text prompts like "a photo of a {label}"
+                text_prompts = [f"a photo of a {label}" for label in class_labels]
+                # Tokenize and encode
+                text_tokens = clip.tokenize(text_prompts)
+                text_embeddings = self.clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                text_embeddings = F.normalize(text_embeddings, dim=-1)
+                
+                # Expand to [num_classes, prompt_dim, clip_dim] by repeating and adding small noise
+                # This allows the prompts to learn while starting from meaningful initialization
+                init_prompts = text_embeddings.unsqueeze(1).repeat(1, prompt_dim, 1)  # [num_classes, prompt_dim, clip_dim]
+                # Add small random noise to allow learning
+                noise = torch.randn_like(init_prompts) * 0.01
+                init_prompts = init_prompts + noise
+        else:
+            # Fallback to random initialization
+            init_prompts = torch.randn(num_classes, prompt_dim, self.clip_dim)
+            nn.init.normal_(init_prompts, std=0.02)
+        
         # Learnable text prompts (one per class)
         # Each prompt is a learnable embedding that will be processed by CLIP's text encoder
         # Format: [num_classes, prompt_dim] where prompt_dim is the token sequence length
-        self.class_prompts = nn.Parameter(torch.randn(num_classes, prompt_dim, self.clip_dim))
-        nn.init.normal_(self.class_prompts, std=0.02)
+        self.class_prompts = nn.Parameter(init_prompts)
         
         # Projection to match CLIP dimensions (for images)
         self.projection = nn.Sequential(
