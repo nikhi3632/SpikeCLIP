@@ -23,6 +23,7 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
+    perceptual_weight: 0.1  # Add perceptual loss to encourage meaningful feature learning
   
   # Training parameters
   training:

@@ -105,7 +105,8 @@ def main():
     criterion = get_loss_fn(
         loss_config.get('type', 'reconstruction'),
         l1_weight=loss_config.get('l1_weight', 1.0),
-        l2_weight=loss_config.get('l2_weight', 1.0)
+        l2_weight=loss_config.get('l2_weight', 1.0),
+        perceptual_weight=loss_config.get('perceptual_weight', 0.0)
     )
     
     # Optimizer

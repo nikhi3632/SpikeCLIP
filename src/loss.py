@@ -4,12 +4,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ReconstructionLoss(nn.Module):
-    """L1 + L2 loss for image reconstruction."""
-    def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0):
+    """L1 + L2 loss for image reconstruction with optional perceptual loss."""
+    def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0, perceptual_weight=0.0):
         super().__init__()
         self.l1_weight = l1_weight
         self.l2_weight = l2_weight
         self.identity_penalty = identity_penalty
+        self.perceptual_weight = perceptual_weight
+        
+        # Simple feature extractor for perceptual loss (if needed)
+        if perceptual_weight > 0:
+            # Use a simple conv layer to extract features
+            self.feature_extractor = nn.Sequential(
+                nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+            )
+        else:
+            self.feature_extractor = None
     
     def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
@@ -19,6 +32,13 @@ class ReconstructionLoss(nn.Module):
         l1_loss = F.l1_loss(pred, target)
         l2_loss = F.mse_loss(pred, target)
         reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss
+        
+        # Add perceptual loss to encourage meaningful feature learning
+        if self.perceptual_weight > 0 and self.feature_extractor is not None:
+            pred_features = self.feature_extractor(pred)
+            target_features = self.feature_extractor(target)
+            perceptual_loss = F.mse_loss(pred_features, target_features)
+            reconstruction_loss = reconstruction_loss + self.perceptual_weight * perceptual_loss
         
         # Add penalty for identity mapping (when pred == target)
         # This encourages the model to actually refine, not just copy
