@@ -13,7 +13,7 @@ from tqdm import tqdm
 from config_loader import load_config
 from data_loader import get_loader
 from models.coarse_reconstruction import CoarseSNN
-from models.prompt_learning import PromptAdapter
+from models.prompt_learning import HQ_LQ_PromptAdapter
 from loss import get_loss_fn
 from training.trainer_utils import Trainer
 from training.optimizer_factory import build_optimizer, build_scheduler
@@ -43,7 +43,6 @@ class PromptTrainer(Trainer):
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}")
         for batch_idx, batch in enumerate(pbar):
             spikes = batch[0].to(self.device)  # [B, T, H, W]
-            label_indices = batch[2].to(self.device)  # [B]
             batch_size = spikes.size(0)
             
             # Track latency
@@ -53,15 +52,33 @@ class PromptTrainer(Trainer):
             
             self.optimizer.zero_grad()
             
-            # Stage 1: Get coarse images
+            # Stage 1: Get coarse images (LQ images)
             with torch.no_grad():
-                coarse_images = self.coarse_model(spikes)  # [B, 3, H, W]
+                lq_images = self.coarse_model(spikes)  # [B, 3, H, W]
             
-            # Stage 2: Get image and text features
+            # Generate HQ images according to the paper
+            # According to paper: HQ images from generation pipeline
+            # - For synthetic data: WGSE (Weighted Gradient Spike Encoding)
+            # - For real data: Mixture of multiple reconstruction methods
+            # We use mixture approach that combines TFI, weighted temporal average, and spike count
+            with torch.no_grad():
+                from utils.hq_generation import generate_hq_images
+                hq_method = getattr(self, 'hq_generation_method', 'mixture')
+                hq_images = generate_hq_images(spikes, method=hq_method)  # [B, 3, H, W]
+            
+            # Combine HQ and LQ images: [2*B, 3, H, W]
+            all_images = torch.cat([hq_images, lq_images], dim=0)
+            # Labels: 1 for HQ, 0 for LQ
+            labels = torch.cat([
+                torch.ones(batch_size, dtype=torch.long, device=self.device),  # HQ
+                torch.zeros(batch_size, dtype=torch.long, device=self.device)  # LQ
+            ], dim=0)
+            
+            # Stage 2: Get image features and HQ/LQ prompt features
             if self.use_amp:
                 with torch.amp.autocast('cuda'):
-                    image_features, text_features = self.model(coarse_images, label_indices)
-                    loss = self.criterion(image_features, text_features)
+                    image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
+                    loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -70,8 +87,8 @@ class PromptTrainer(Trainer):
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
-                image_features, text_features = self.model(coarse_images, label_indices)
-                loss = self.criterion(image_features, text_features)
+                image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
+                loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -115,19 +132,31 @@ class PromptTrainer(Trainer):
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 spikes = batch[0].to(self.device)
-                label_indices = batch[2].to(self.device)
+                batch_size = spikes.size(0)
                 
-                # Stage 1: Get coarse images
-                coarse_images = self.coarse_model(spikes)
+                # Stage 1: Get coarse images (LQ images)
+                lq_images = self.coarse_model(spikes)
+                
+                # Generate HQ images according to the paper
+                from utils.hq_generation import generate_hq_images
+                hq_method = getattr(self, 'hq_generation_method', 'mixture')
+                hq_images = generate_hq_images(spikes, method=hq_method)
+                
+                # Combine HQ and LQ images
+                all_images = torch.cat([hq_images, lq_images], dim=0)
+                labels = torch.cat([
+                    torch.ones(batch_size, dtype=torch.long, device=self.device),  # HQ
+                    torch.zeros(batch_size, dtype=torch.long, device=self.device)  # LQ
+                ], dim=0)
                 
                 # Stage 2: Get features and compute loss
                 if self.use_amp:
                     with torch.amp.autocast('cuda'):
-                        image_features, text_features = self.model(coarse_images, label_indices)
-                        loss = self.criterion(image_features, text_features)
+                        image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
+                        loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 else:
-                    image_features, text_features = self.model(coarse_images, label_indices)
-                    loss = self.criterion(image_features, text_features)
+                    image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
+                    loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -236,22 +265,16 @@ def main():
     for param in coarse_model.parameters():
         param.requires_grad = False
     
-    # Stage 2 model
-    num_classes = model_config.get('num_classes', len(labels))
-    if num_classes == 101:  # Default placeholder, use actual labels
-        num_classes = len(labels)
-    
-    model = PromptAdapter(
-        clip_dim=model_config.get('clip_dim', 512),
-        num_classes=num_classes,
+    # Stage 2 model: HQ/LQ Prompt Adapter (according to paper)
+    model = HQ_LQ_PromptAdapter(
+        clip_model_name=model_config.get('clip_model_name', 'ViT-B/32'),
         prompt_dim=model_config.get('prompt_dim', 77),
-        freeze_image_encoder=model_config.get('freeze_image_encoder', True),
-        class_labels=labels  # Pass labels for better initialization
+        freeze_image_encoder=model_config.get('freeze_image_encoder', True)
     )
     
-    # Loss
+    # Loss: HQ/LQ Prompt Loss (binary classification)
     criterion = get_loss_fn(
-        loss_config.get('type', 'clip'),
+        loss_config.get('type', 'hq_lq_prompt'),
         temperature=loss_config.get('temperature', 0.07)
     )
     
@@ -283,6 +306,8 @@ def main():
         early_stopping_min_delta=early_stopping_min_delta
     )
     trainer.coarse_model = coarse_model.to(device)
+    # Set HQ generation method from config
+    trainer.hq_generation_method = model_config.get('hq_generation_method', 'mixture')
     
     # Resume if specified
     if args.resume:

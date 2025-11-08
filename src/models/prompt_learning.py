@@ -1,9 +1,10 @@
-"""Stage 2 CLIP adapter"""
+"""Stage 2 CLIP adapter - includes both HQ/LQ prompt learning and class prompt learning."""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 import clip
+
 
 class TextEncoder(nn.Module):
     """Text encoder to process learnable prompts through CLIP's text encoder (from reference code)."""
@@ -17,9 +18,17 @@ class TextEncoder(nn.Module):
 
     def forward(self, prompts):
         """
-        prompts: [B, prompt_dim, clip_dim] learnable prompt embeddings
-        Returns: [B, clip_dim] text features
+        prompts: [B, prompt_dim, clip_dim] learnable prompt embeddings (or [prompt_dim, clip_dim] for single prompt)
+        Returns: [B, clip_dim] text features (or [clip_dim] for single prompt)
         """
+        # Handle both batched and single prompt cases
+        if prompts.dim() == 2:
+            # Single prompt: [prompt_dim, clip_dim]
+            prompts = prompts.unsqueeze(0)  # [1, prompt_dim, clip_dim]
+            single = True
+        else:
+            single = False
+        
         # Add positional embedding (use first prompt_dim positions)
         # prompts is [B, prompt_dim, clip_dim], positional_embedding is [prompt_dim, clip_dim]
         x = prompts + self.positional_embedding[:prompts.shape[1]].type(self.dtype)
@@ -29,12 +38,129 @@ class TextEncoder(nn.Module):
         x = self.ln_final(x).type(self.dtype)
         # Get features at the end position (like CLIP does)
         x = x[torch.arange(x.shape[0]), -1] @ self.text_projection
-        return x
+        
+        if single:
+            return x.squeeze(0)  # [clip_dim]
+        return x  # [B, clip_dim]
+
+
+class HQ_LQ_PromptAdapter(nn.Module):
+    """
+    CLIP adapter for HQ/LQ prompt learning (Stage 2).
+    
+    According to the paper:
+    - Learns HQ (High-Quality) and LQ (Low-Quality) prompts
+    - Binary classification: HQ vs LQ
+    - Loss: CrossEntropy(y, y_hat) where y_hat = exp(Φ_image(I)·Φ_text(T_hq)) / Σ exp(Φ_image(I)·Φ_text(T_i))
+    
+    Input:  images [B, 3, H, W] (HQ or LQ images)
+    Output: image_features [B, clip_dim], hq_prompt_features [clip_dim], lq_prompt_features [clip_dim]
+    """
+    
+    def __init__(
+        self,
+        clip_model_name: str = "ViT-B/32",
+        prompt_dim: int = 77,
+        freeze_image_encoder: bool = True
+    ):
+        super().__init__()
+        self.prompt_dim = prompt_dim
+        
+        # Load CLIP model
+        try:
+            self.clip_model, self.clip_preprocess = clip.load(clip_model_name, device="cpu")
+            self.clip_model.eval()
+            
+            # Get CLIP dimensions
+            with torch.no_grad():
+                dummy_image = torch.zeros(1, 3, 224, 224)
+                dummy_text = clip.tokenize(["a"])
+                image_features = self.clip_model.encode_image(dummy_image)
+                text_features = self.clip_model.encode_text(dummy_text)
+                self.clip_dim = image_features.shape[-1]
+            
+            # Use CLIP's image encoder
+            self.image_encoder = self.clip_model.visual
+            
+            if freeze_image_encoder:
+                for param in self.image_encoder.parameters():
+                    param.requires_grad = False
+            
+        except Exception as e:
+            raise RuntimeError(f"Failed to load CLIP model: {e}")
+        
+        # Learnable HQ and LQ prompts
+        # Initialize from CLIP text embeddings
+        with torch.no_grad():
+            # Initialize HQ prompt from "a high quality image"
+            hq_text = clip.tokenize(["a high quality image"])
+            hq_embedding = self.clip_model.encode_text(hq_text)  # [1, clip_dim]
+            hq_embedding = F.normalize(hq_embedding, dim=-1)
+            
+            # Initialize LQ prompt from "a low quality image"
+            lq_text = clip.tokenize(["a low quality image"])
+            lq_embedding = self.clip_model.encode_text(lq_text)  # [1, clip_dim]
+            lq_embedding = F.normalize(lq_embedding, dim=-1)
+            
+            # Expand to [prompt_dim, clip_dim] by repeating and adding small noise
+            hq_init = hq_embedding.squeeze(0).unsqueeze(0).repeat(prompt_dim, 1)  # [prompt_dim, clip_dim]
+            lq_init = lq_embedding.squeeze(0).unsqueeze(0).repeat(prompt_dim, 1)  # [prompt_dim, clip_dim]
+            
+            # Add small random noise to allow learning
+            hq_noise = torch.randn_like(hq_init) * 0.01
+            lq_noise = torch.randn_like(lq_init) * 0.01
+            hq_init = hq_init + hq_noise
+            lq_init = lq_init + lq_noise
+        
+        # Learnable prompts: [prompt_dim, clip_dim]
+        self.hq_prompt = nn.Parameter(hq_init)
+        self.lq_prompt = nn.Parameter(lq_init)
+        
+        # Text encoder to process prompts through CLIP's text encoder
+        self.text_encoder = TextEncoder(self.clip_model)
+        
+        # Freeze text encoder parameters (only prompts are learnable)
+        for param in self.text_encoder.parameters():
+            param.requires_grad = False
+    
+    def forward(self, images: torch.Tensor) -> tuple:
+        """
+        images: [B, 3, H, W] images (HQ or LQ)
+        Returns: (image_features, hq_prompt_features, lq_prompt_features)
+        """
+        # Normalize images for CLIP
+        images_normalized = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
+        images_normalized = torch.clamp(images_normalized, 0, 1)
+        
+        # Encode images using CLIP
+        image_features = self.image_encoder(images_normalized)  # [B, clip_dim]
+        image_features = F.normalize(image_features, dim=-1)
+        
+        # Encode HQ and LQ prompts
+        hq_prompt_features = self.text_encoder(self.hq_prompt)  # [clip_dim]
+        lq_prompt_features = self.text_encoder(self.lq_prompt)  # [clip_dim]
+        
+        # Normalize prompt features
+        hq_prompt_features = F.normalize(hq_prompt_features, dim=-1)
+        lq_prompt_features = F.normalize(lq_prompt_features, dim=-1)
+        
+        return image_features, hq_prompt_features, lq_prompt_features
+    
+    def get_prompt_features(self) -> tuple:
+        """Get HQ and LQ prompt features."""
+        hq_prompt_features = self.text_encoder(self.hq_prompt)  # [clip_dim]
+        lq_prompt_features = self.text_encoder(self.lq_prompt)  # [clip_dim]
+        hq_prompt_features = F.normalize(hq_prompt_features, dim=-1)
+        lq_prompt_features = F.normalize(lq_prompt_features, dim=-1)
+        return hq_prompt_features, lq_prompt_features
+
 
 class PromptAdapter(nn.Module):
     """
-    CLIP adapter for prompt learning.
+    CLIP adapter for class prompt learning.
     Takes coarse reconstructed images and learns text prompts for CLIP alignment.
+    
+    Used for combining checkpoints and inference.
     
     Input:  coarse_images [B, 3, H, W]
     Output: clip_features [B, D] or text_embeddings

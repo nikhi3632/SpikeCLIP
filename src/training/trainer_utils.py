@@ -90,24 +90,11 @@ class Trainer:
             if self.use_amp:
                 with torch.amp.autocast('cuda'):
                     outputs = self.model(spikes)  # [B, 3, H, W]
-                    # For unpaired training: use self-supervised reconstruction
-                    # Improved target: use mean + variance for richer temporal information
-                    # This encourages the model to learn both intensity and temporal dynamics
-                    # Self-supervised target: temporal mean + variance of spikes
-                    spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                    
-                    # Combine mean and variance (weight variance less to avoid over-emphasis)
-                    spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
-                    
-                    # Per-sample normalization to preserve relative intensities within each sample
-                    # This helps maintain semantic structure while normalizing
-                    spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                    spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                    spike_range = spike_max - spike_min + 1e-8
-                    spike_combined = (spike_combined - spike_min) / spike_range
-                    spike_combined = torch.clamp(spike_combined, 0, 1)
-                    target = spike_combined.repeat(1, 3, 1, 1)
+                    # Use TFI (Texture from ISI) as target according to the paper
+                    # TFI = Θ/ISI where ISI is Inter-Spike Interval
+                    from utils.tfi import calculate_tfi_vectorized
+                    tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
+                    target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                     # Pass label_indices for semantic alignment loss if available
                     if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                         loss = self.criterion(outputs, target, label_indices)
@@ -122,22 +109,11 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(spikes)
-                # Improved target: use mean + variance for richer temporal information
-                # This encourages the model to learn both intensity and temporal dynamics
-                spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                
-                # Combine mean and variance (weight variance less to avoid over-emphasis)
-                spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
-                
-                # Per-sample normalization to preserve relative intensities within each sample
-                # This helps maintain semantic structure while normalizing
-                spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                spike_range = spike_max - spike_min + 1e-8
-                spike_combined = (spike_combined - spike_min) / spike_range
-                spike_combined = torch.clamp(spike_combined, 0, 1)
-                target = spike_combined.repeat(1, 3, 1, 1)
+                # Use TFI (Texture from ISI) as target according to the paper
+                # TFI = Θ/ISI where ISI is Inter-Spike Interval
+                from utils.tfi import calculate_tfi_vectorized
+                tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
+                target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                 # Pass label_indices for semantic alignment loss if available
                 if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                     loss = self.criterion(outputs, target, label_indices)
@@ -190,17 +166,11 @@ class Trainer:
                 if self.use_amp:
                     with torch.amp.autocast('cuda'):
                         outputs = self.model(spikes)
-                        # Improved target: use mean + variance for richer temporal information
-                        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                        spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
-                        # Per-sample normalization
-                        spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                        spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                        spike_range = spike_max - spike_min + 1e-8
-                        spike_combined = (spike_combined - spike_min) / spike_range
-                        spike_combined = torch.clamp(spike_combined, 0, 1)
-                        target = spike_combined.repeat(1, 3, 1, 1)
+                        # Use TFI (Texture from ISI) as target according to the paper
+                        # TFI = Θ/ISI where ISI is Inter-Spike Interval
+                        from utils.tfi import calculate_tfi_vectorized
+                        tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
+                        target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                         # Pass label_indices for semantic alignment loss if available
                         if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                             loss = self.criterion(outputs, target, label_indices)
@@ -208,17 +178,11 @@ class Trainer:
                             loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    # Improved target: use mean + variance for richer temporal information
-                    spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
-                    # Per-sample normalization
-                    spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                    spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-                    spike_range = spike_max - spike_min + 1e-8
-                    spike_combined = (spike_combined - spike_min) / spike_range
-                    spike_combined = torch.clamp(spike_combined, 0, 1)
-                    target = spike_combined.repeat(1, 3, 1, 1)
+                    # Use TFI (Texture from ISI) as target according to the paper
+                    # TFI = Θ/ISI where ISI is Inter-Spike Interval
+                    from utils.tfi import calculate_tfi_vectorized
+                    tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
+                    target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                     # Pass label_indices for semantic alignment loss if available
                     if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                         loss = self.criterion(outputs, target, label_indices)

@@ -57,17 +57,17 @@ coarse:
 
 # Prompt Learning Configuration
 prompt:
-  # Model parameters
+  # Model parameters - HQ/LQ Prompt Adapter
   model:
-    clip_dim: 512
-    prompt_dim: 77
-    num_classes: 101  # Will be set from labels
-    freeze_image_encoder: true
+    clip_model_name: "ViT-B/32"  # CLIP model name
+    prompt_dim: 77  # Prompt dimension
+    freeze_image_encoder: true  # Freeze CLIP image encoder
+    hq_generation_method: "mixture"  # HQ image generation method: "mixture" (default), "tfi", "wgse", or "weighted_avg"
   
-  # Loss parameters
+  # Loss parameters - HQ/LQ Prompt Loss (binary classification)
   loss:
-    type: "clip"
-    temperature: 0.15  # Increased from 0.07 to 0.15 for smoother loss landscape and better learning
+    type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
+    temperature: 0.07  # Temperature for contrastive loss
   
   # Training parameters
   training:
@@ -107,12 +107,11 @@ refine:
     base_channels: 64
     num_down: 4  # Number of downsampling layers
   
-  # Loss parameters - RefinementLoss (encourages improvement without matching target)
+  # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
   loss:
-    type: "refinement"  # Use RefinementLoss instead of reconstruction
-    identity_penalty: 20.0  # Increased from 10.0 with continuous exponential penalty
-    perceptual_weight: 5.0  # Increased from 2.0 for stronger CLIP perceptual guidance
-    tv_weight: 0.1  # Total variation loss for smoothness
+    type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
+    temperature: 0.07  # Temperature for contrastive loss
+    prompt_weight: 100.0  # λ=100 according to paper: L_total = L_class + λ*L_prompt
   
   # Training parameters
   training:

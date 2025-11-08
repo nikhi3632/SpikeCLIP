@@ -6,10 +6,12 @@ import clip
 
 class RefinementLoss(nn.Module):
     """Loss for refinement stage - encourages improvement without matching target."""
-    def __init__(self, identity_penalty=10.0, perceptual_weight=1.0, tv_weight=0.1, clip_model=None):
+    def __init__(self, identity_penalty=10.0, perceptual_weight=1.0, tv_weight=0.1, 
+                 semantic_weight=0.0, clip_model=None, labels=None):
         super().__init__()
         self.identity_penalty = identity_penalty  # Very large penalty to prevent copying
         self.perceptual_weight = perceptual_weight  # Encourage better CLIP features
+        self.semantic_weight = semantic_weight  # Use CLIP text features as semantic reference
         self.tv_weight = tv_weight  # Total variation for smoothness
         self.clip_model = clip_model
         
@@ -20,6 +22,16 @@ class RefinementLoss(nn.Module):
         else:
             self.feature_extractor = None
             self.use_clip_perceptual = False
+        
+        # Pre-compute text embeddings for semantic loss if labels are provided
+        self.text_embeddings = None
+        self.text_tokens = None
+        if semantic_weight > 0 and clip_model is not None and labels is not None:
+            with torch.no_grad():
+                # Create text prompts like "a photo of a {label}"
+                text_prompts = [f"a photo of a {label}" for label in labels]
+                self.text_tokens = clip.tokenize(text_prompts)  # [num_classes, 77]
+                # Will encode on first forward pass when device is known
     
     def total_variation_loss(self, img):
         """Total variation loss for smoothness."""
@@ -28,14 +40,14 @@ class RefinementLoss(nn.Module):
         w_tv = torch.pow(img[:, :, :, 1:] - img[:, :, :, :-1], 2).sum()
         return (h_tv + w_tv) / batch_size
     
-    def forward(self, refined: torch.Tensor, coarse: torch.Tensor) -> torch.Tensor:
+    def forward(self, refined: torch.Tensor, coarse: torch.Tensor, label_indices: torch.Tensor = None) -> torch.Tensor:
         """
         refined: [B, C, H, W] refined image
         coarse: [B, C, H, W] coarse image
+        label_indices: [B] optional label indices for semantic alignment
         """
-        # Very small structure loss to maintain basic structure (not exact match)
-        # Reduced weight to discourage copying
-        structure_loss = F.l1_loss(refined, coarse) * 0.01
+        # REMOVED structure_loss - it was causing conflict with identity_penalty
+        # The model should learn structure from perceptual/semantic losses, not pixel-level similarity
         
         # Continuous identity penalty to prevent copying
         l1_diff = F.l1_loss(refined, coarse)
@@ -70,22 +82,54 @@ class RefinementLoss(nn.Module):
             refined_features = F.normalize(refined_features, dim=-1)
             coarse_features = F.normalize(coarse_features, dim=-1)
             
-            # Perceptual loss: encourage refined to have better features
-            # Use a loss that encourages refinement: we want refined features to be "better"
-            # One approach: encourage refined features to have higher magnitude (more confident)
-            # Another: use cosine similarity but with a margin (refined should be more similar to ideal)
-            # For now, use MSE with a weight to encourage improvement
-            # But also add a term that encourages refined to be "sharper" (higher feature magnitude)
-            feature_mse = F.mse_loss(refined_features, coarse_features)
-            # Encourage refined features to have higher magnitude (more confident features)
+            # Perceptual loss: encourage refined to have BETTER features than coarse
+            # Strategy: Encourage refined features to be more "confident" (higher magnitude)
+            # and more semantically aligned (if we have labels)
             refined_magnitude = refined_features.norm(dim=-1).mean()
             coarse_magnitude = coarse_features.norm(dim=-1).mean()
-            magnitude_boost = torch.clamp(coarse_magnitude - refined_magnitude, min=0.0)  # Penalize if refined is weaker
+            # Penalize if refined is weaker than coarse (encourage improvement)
+            magnitude_boost = torch.clamp(coarse_magnitude - refined_magnitude, min=0.0)
             
-            perceptual_loss = (feature_mse * 0.1 + magnitude_boost * 0.1) * self.perceptual_weight
+            # Also encourage refined to be different from coarse at feature level
+            # But not too different (maintain semantic content)
+            feature_diff = F.mse_loss(refined_features, coarse_features)
+            
+            # Perceptual loss: encourage higher magnitude (confidence) while allowing feature changes
+            perceptual_loss = (magnitude_boost * 0.5 + feature_diff * 0.1) * self.perceptual_weight
         
-        # Total loss: structure (maintain) + identity penalty (prevent copy) + TV (smooth) + perceptual (improve)
-        total_loss = structure_loss + identity_penalty + tv_loss + perceptual_loss
+        # Semantic loss: use CLIP text features as "ideal" reference (we have labels!)
+        semantic_loss = 0.0
+        if self.semantic_weight > 0 and self.clip_model is not None and label_indices is not None:
+            # Normalize refined images for CLIP
+            refined_norm = F.interpolate(torch.clamp(refined, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
+            
+            # Ensure dtype matches CLIP model
+            if self.clip_model is not None:
+                model_dtype = next(self.clip_model.parameters()).dtype
+                refined_norm = refined_norm.to(dtype=model_dtype)
+            
+            # Get image features from CLIP
+            refined_features = self.feature_extractor(refined_norm)  # [B, clip_dim]
+            refined_features = F.normalize(refined_features, dim=-1)
+            
+            # Get text features for the labels (semantic reference)
+            if self.text_embeddings is None or self.text_embeddings.device != refined.device:
+                text_tokens = self.text_tokens.to(refined.device)
+                with torch.no_grad():
+                    self.text_embeddings = self.clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                    self.text_embeddings = F.normalize(self.text_embeddings, dim=-1)
+            
+            # Select text features for the current batch labels
+            text_features = self.text_embeddings[label_indices]  # [B, clip_dim]
+            
+            # Semantic loss: encourage refined features to be MORE similar to text features than coarse
+            # This gives us a semantic target without needing ground truth images!
+            refined_similarity = (refined_features * text_features).sum(dim=1).mean()  # [B] -> scalar
+            # Maximize similarity (minimize 1 - similarity)
+            semantic_loss = (1.0 - refined_similarity) * self.semantic_weight
+        
+        # Total loss: identity penalty (prevent copy) + TV (smooth) + perceptual (improve) + semantic (align)
+        total_loss = identity_penalty + tv_loss + perceptual_loss + semantic_loss
         return total_loss
 
 class ReconstructionLoss(nn.Module):
@@ -215,6 +259,107 @@ class ReconstructionLoss(nn.Module):
         
         return reconstruction_loss
 
+class HQ_LQ_PromptLoss(nn.Module):
+    """
+    Loss for HQ/LQ prompt learning (Stage 2).
+    
+    According to the paper:
+    L_initial = CrossEntropy(y, y_hat)
+    where y_hat = exp(Φ_image(I)·Φ_text(T_hq)) / Σ exp(Φ_image(I)·Φ_text(T_i))
+    and y is 0 for LQ, 1 for HQ
+    """
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+    
+    def forward(self, image_features: torch.Tensor, hq_prompt_features: torch.Tensor, 
+                lq_prompt_features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """
+        image_features: [B, clip_dim] image features
+        hq_prompt_features: [clip_dim] HQ prompt features
+        lq_prompt_features: [clip_dim] LQ prompt features
+        labels: [B] binary labels (0 for LQ, 1 for HQ)
+        """
+        # Compute similarities
+        # image_features: [B, clip_dim]
+        # hq_prompt_features: [clip_dim] -> [1, clip_dim]
+        # lq_prompt_features: [clip_dim] -> [1, clip_dim]
+        
+        hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [B]
+        lq_similarity = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [B]
+        
+        # Stack similarities: [B, 2] where [:, 0] is LQ, [:, 1] is HQ
+        logits = torch.stack([lq_similarity, hq_similarity], dim=1) / self.temperature  # [B, 2]
+        
+        # Cross-entropy loss
+        loss = F.cross_entropy(logits, labels.long())
+        
+        return loss
+
+
+class InfoNCELoss(nn.Module):
+    """
+    InfoNCE loss for contrastive learning (Stage 3 class loss).
+    
+    According to the paper:
+    L_class = -Σ log(exp(Φ_image(I_i)·Φ_text(T_ci)/τ) / Σ_j exp(Φ_image(I_i)·Φ_text(T_cj)/τ))
+    """
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+    
+    def forward(self, image_features: torch.Tensor, text_features: torch.Tensor, 
+                label_indices: torch.Tensor) -> torch.Tensor:
+        """
+        image_features: [B, clip_dim] image features
+        text_features: [num_classes, clip_dim] text features for all classes
+        label_indices: [B] label indices for each image
+        """
+        # Compute similarities: [B, num_classes]
+        similarities = image_features @ text_features.t() / self.temperature
+        
+        # InfoNCE loss: for each image, maximize similarity with its class
+        # Loss = -log(exp(sim[i, label[i]]) / Σ_j exp(sim[i, j]))
+        loss = F.cross_entropy(similarities, label_indices.long())
+        
+        return loss
+
+
+class PromptLoss(nn.Module):
+    """
+    Prompt loss for Stage 3 (alignment with HQ prompts).
+    
+    According to the paper:
+    L_prompt = -exp(Φ_image(I)·Φ_text(T_hq)) / Σ exp(Φ_image(I)·Φ_text(T_i))
+    where T_i ∈ {T_hq, T_lq}
+    """
+    def __init__(self, temperature: float = 0.07):
+        super().__init__()
+        self.temperature = temperature
+    
+    def forward(self, image_features: torch.Tensor, hq_prompt_features: torch.Tensor,
+                lq_prompt_features: torch.Tensor) -> torch.Tensor:
+        """
+        image_features: [B, clip_dim] image features
+        hq_prompt_features: [clip_dim] HQ prompt features
+        lq_prompt_features: [clip_dim] LQ prompt features
+        """
+        # Compute similarities
+        hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [B]
+        lq_similarity = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [B]
+        
+        # Stack similarities: [B, 2] where [:, 0] is LQ, [:, 1] is HQ
+        logits = torch.stack([lq_similarity, hq_similarity], dim=1) / self.temperature  # [B, 2]
+        
+        # Prompt loss: maximize probability of HQ (class 1)
+        # Loss = -log(exp(hq_sim) / (exp(hq_sim) + exp(lq_sim)))
+        # This is equivalent to cross-entropy with target = 1 (HQ)
+        target = torch.ones(image_features.size(0), dtype=torch.long, device=image_features.device)
+        loss = F.cross_entropy(logits, target)
+        
+        return loss
+
+
 class CLIPLoss(nn.Module):
     """CLIP contrastive loss for image-text alignment."""
     def __init__(self, temperature: float = 0.07):
@@ -254,7 +399,20 @@ def get_loss_fn(loss_type: str = "reconstruction", **kwargs):
     elif loss_type == "refinement":
         # Use RefinementLoss for Stage 3
         clip_model = kwargs.pop('clip_model', None)
-        return RefinementLoss(clip_model=clip_model, **kwargs)
+        labels = kwargs.pop('labels', None)
+        return RefinementLoss(clip_model=clip_model, labels=labels, **kwargs)
+    elif loss_type == "hq_lq_prompt":
+        # Use HQ_LQ_PromptLoss for Stage 2
+        temperature = kwargs.pop('temperature', 0.07)
+        return HQ_LQ_PromptLoss(temperature=temperature)
+    elif loss_type == "info_nce":
+        # Use InfoNCELoss for Stage 3 class loss
+        temperature = kwargs.pop('temperature', 0.07)
+        return InfoNCELoss(temperature=temperature)
+    elif loss_type == "prompt":
+        # Use PromptLoss for Stage 3 prompt loss
+        temperature = kwargs.pop('temperature', 0.07)
+        return PromptLoss(temperature=temperature)
     elif loss_type == "clip":
         return CLIPLoss(**kwargs)
     else:

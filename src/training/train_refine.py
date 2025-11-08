@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import torch
+import torch.nn.functional as F
 import argparse
 import time
 from tqdm import tqdm
@@ -14,7 +15,9 @@ from config_loader import load_config
 from data_loader import get_loader
 from models.coarse_reconstruction import CoarseSNN
 from models.refinement import RefinementNet
+from models.prompt_learning import HQ_LQ_PromptAdapter
 from loss import get_loss_fn
+import clip
 from training.trainer_utils import Trainer
 from training.optimizer_factory import build_optimizer, build_scheduler
 from utils.helpers import get_device, set_seed
@@ -41,6 +44,7 @@ class RefineTrainer(Trainer):
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}")
         for batch_idx, batch in enumerate(pbar):
             spikes = batch[0].to(self.device)  # [B, T, H, W]
+            label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
             batch_size = spikes.size(0)
             
             # Track latency
@@ -55,12 +59,29 @@ class RefineTrainer(Trainer):
                 coarse_images = self.coarse_model(spikes)  # [B, 3, H, W]
             
             # Stage 3: Refine images
-            # Use RefinementLoss that encourages improvement without matching target
+            # According to paper: L_total = L_class + λ*L_prompt (λ=100)
             if self.use_amp:
                 with torch.amp.autocast('cuda'):
                     refined_images = self.model(coarse_images)  # [B, 3, H, W]
-                    # RefinementLoss uses coarse as structure constraint, not target
-                    loss = self.criterion(refined_images, coarse_images)
+                    
+                    # Get image features from refined images using CLIP directly
+                    # Normalize images for CLIP
+                    refined_normalized = F.interpolate(refined_images, size=(224, 224), mode='bilinear', align_corners=False)
+                    refined_normalized = torch.clamp(refined_normalized, 0, 1)
+                    image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
+                    image_features = F.normalize(image_features, dim=-1)
+                    
+                    # Prompt Loss: Alignment with HQ prompts
+                    hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
+                    prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
+                    
+                    # Class Loss: InfoNCE loss for classification
+                    # Use CLIP text features directly (according to paper: "class-label features")
+                    # text_features is [num_classes, clip_dim] - pre-computed in __init__
+                    class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                    
+                    # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                    loss = class_loss + self.prompt_weight * prompt_loss
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -70,8 +91,25 @@ class RefineTrainer(Trainer):
                 self.scaler.update()
             else:
                 refined_images = self.model(coarse_images)
-                # RefinementLoss uses coarse as structure constraint, not target
-                loss = self.criterion(refined_images, coarse_images)
+                
+                # Get image features from refined images using CLIP directly
+                # Normalize images for CLIP
+                refined_normalized = F.interpolate(refined_images, size=(224, 224), mode='bilinear', align_corners=False)
+                refined_normalized = torch.clamp(refined_normalized, 0, 1)
+                image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
+                image_features = F.normalize(image_features, dim=-1)
+                
+                # Prompt Loss: Alignment with HQ prompts
+                hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
+                prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
+                
+                # Class Loss: InfoNCE loss for classification
+                # Use CLIP text features directly (according to paper: "class-label features")
+                # text_features is [num_classes, clip_dim] - pre-computed in __init__
+                class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                
+                # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                loss = class_loss + self.prompt_weight * prompt_loss
                 
                 loss.backward()
                 if self.grad_clip:
@@ -115,20 +153,32 @@ class RefineTrainer(Trainer):
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 spikes = batch[0].to(self.device)
+                label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
                 
                 # Stage 1: Get coarse images
                 coarse_images = self.coarse_model(spikes)
                 
                 # Stage 3: Refine and compute loss
-                if self.use_amp:
-                    with torch.amp.autocast('cuda'):
-                        refined_images = self.model(coarse_images)
-                        # RefinementLoss uses coarse as structure constraint, not target
-                        loss = self.criterion(refined_images, coarse_images)
-                else:
-                    refined_images = self.model(coarse_images)
-                    # RefinementLoss uses coarse as structure constraint, not target
-                    loss = self.criterion(refined_images, coarse_images)
+                refined_images = self.model(coarse_images)
+                
+                # Get image features from refined images using CLIP directly
+                # Normalize images for CLIP
+                refined_normalized = F.interpolate(refined_images, size=(224, 224), mode='bilinear', align_corners=False)
+                refined_normalized = torch.clamp(refined_normalized, 0, 1)
+                image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
+                image_features = F.normalize(image_features, dim=-1)
+                
+                # Prompt Loss: Alignment with HQ prompts
+                hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
+                prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
+                
+                # Class Loss: InfoNCE loss for classification
+                # Use CLIP text features directly (according to paper: "class-label features")
+                # text_features is [num_classes, clip_dim] - pre-computed in __init__
+                class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                
+                # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                loss = class_loss + self.prompt_weight * prompt_loss
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -238,7 +288,7 @@ def main():
         param.requires_grad = False
     
     # Stage 3 model
-    # Set use_identity=False to actually train the UNet (not just return coarse)
+    # Set use_identity=False to actually train the UNet (not just identity)
     model = RefinementNet(
         in_channels=model_config.get('in_channels', 3),
         out_channels=model_config.get('out_channels', 3),
@@ -247,33 +297,57 @@ def main():
         use_identity=False  # Train the UNet, not just identity
     )
     
-    # Load CLIP model for CLIP-guided perceptual loss (like reference code)
-    clip_model = None
-    if loss_config.get('perceptual_weight', 0.0) > 0:
-        try:
-            print("Loading CLIP model for perceptual loss...")
-            clip_model, _ = clip.load("ViT-B/32", device=device)
-            # Ensure CLIP model is in float32 (not half precision) to avoid dtype mismatches
-            clip_model = clip_model.float()
-            clip_model.eval()
-            # Freeze CLIP model
-            for param in clip_model.parameters():
-                param.requires_grad = False
-            print("CLIP model loaded successfully for CLIP-guided perceptual loss")
-        except Exception as e:
-            print(f"Warning: Failed to load CLIP model for perceptual loss ({e}). Using fallback feature extractor.")
-            clip_model = None
+    # Load CLIP model for image encoding and text features (according to paper)
+    print("Loading CLIP model for Stage 3...")
+    clip_model, _ = clip.load("ViT-B/32", device=device)
+    clip_model = clip_model.float()  # Ensure float32
+    clip_model.eval()
+    for param in clip_model.parameters():
+        param.requires_grad = False
     
-    # Use RefinementLoss for Stage 3 (encourages improvement without matching target)
-    criterion = get_loss_fn(
-        loss_config.get('type', 'refinement'),  # Use 'refinement' loss type
-        identity_penalty=loss_config.get('identity_penalty', 10.0),  # Very large penalty to prevent copying
-        perceptual_weight=loss_config.get('perceptual_weight', 1.0),  # CLIP perceptual loss for refinement
-        tv_weight=loss_config.get('tv_weight', 0.1),  # Total variation for smoothness
-        clip_model=clip_model  # Pass CLIP model for CLIP-guided perceptual loss
+    # Pre-compute CLIP text features for all classes (according to paper: "class-label features")
+    print("Pre-computing CLIP text features for all classes...")
+    with torch.no_grad():
+        text_prompts = [f"a photo of a {label}" for label in labels]
+        text_tokens = clip.tokenize(text_prompts).to(device)
+        text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+        text_features = F.normalize(text_features, dim=-1)
+    
+    # Load HQ/LQ prompt model from Stage 2 (for prompt loss)
+    prompt_checkpoint_dir = Path(output_config.get('checkpoint_dir', 'outputs/checkpoints/ucaltech'))
+    hq_lq_prompt_model = HQ_LQ_PromptAdapter(
+        clip_model_name=config.get('prompt', {}).get('model', {}).get('clip_model_name', 'ViT-B/32'),
+        prompt_dim=config.get('prompt', {}).get('model', {}).get('prompt_dim', 77),
+        freeze_image_encoder=True
     )
-    # Ensure loss function (and its feature extractor) is on the correct device
-    criterion = criterion.to(device)
+    
+    print(f"Loading HQ/LQ prompt model from {prompt_checkpoint_dir}")
+    try:
+        load_best_checkpoint(
+            str(prompt_checkpoint_dir),
+            hq_lq_prompt_model,
+            device=device,
+            prefix='prompt'
+        )
+    except FileNotFoundError as e:
+        print(f"Warning: Failed to load HQ/LQ prompt checkpoint ({e}). Using random initialization.")
+    hq_lq_prompt_model.eval()
+    for param in hq_lq_prompt_model.parameters():
+        param.requires_grad = False
+    
+    # Loss functions according to paper: L_total = L_class + λ*L_prompt (λ=100)
+    prompt_criterion = get_loss_fn(
+        'prompt',  # Prompt loss: alignment with HQ prompts
+        temperature=loss_config.get('temperature', 0.07)
+    )
+    class_criterion = get_loss_fn(
+        'info_nce',  # InfoNCE loss: classification
+        temperature=loss_config.get('temperature', 0.07)
+    )
+    prompt_weight = loss_config.get('prompt_weight', 100.0)  # λ=100 according to paper
+    
+    # Dummy criterion for compatibility (not used)
+    criterion = prompt_criterion
     
     # Optimizer
     optimizer_cfg = optimizer_config.copy()
@@ -303,6 +377,13 @@ def main():
         early_stopping_min_delta=early_stopping_min_delta
     )
     trainer.coarse_model = coarse_model.to(device)
+    trainer.hq_lq_prompt_model = hq_lq_prompt_model.to(device)
+    trainer.clip_model = clip_model.to(device)
+    trainer.text_features = text_features.to(device)  # Pre-computed CLIP text features
+    trainer.prompt_criterion = prompt_criterion.to(device)
+    trainer.class_criterion = class_criterion.to(device)
+    trainer.prompt_weight = prompt_weight
+    trainer.labels = labels
     
     # Resume if specified
     if args.resume:
