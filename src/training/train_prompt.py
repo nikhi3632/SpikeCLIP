@@ -59,7 +59,7 @@ class PromptTrainer(Trainer):
             
             # Stage 2: Get image and text features
             if self.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     image_features, text_features = self.model(coarse_images, label_indices)
                     loss = self.criterion(image_features, text_features)
                 
@@ -122,7 +122,7 @@ class PromptTrainer(Trainer):
                 
                 # Stage 2: Get features and compute loss
                 if self.use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda'):
                         image_features, text_features = self.model(coarse_images, label_indices)
                         loss = self.criterion(image_features, text_features)
                 else:

@@ -57,7 +57,7 @@ class RefineTrainer(Trainer):
             # Stage 3: Refine images
             # Use RefinementLoss that encourages improvement without matching target
             if self.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     refined_images = self.model(coarse_images)  # [B, 3, H, W]
                     # RefinementLoss uses coarse as structure constraint, not target
                     loss = self.criterion(refined_images, coarse_images)
@@ -121,7 +121,7 @@ class RefineTrainer(Trainer):
                 
                 # Stage 3: Refine and compute loss
                 if self.use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda'):
                         refined_images = self.model(coarse_images)
                         # RefinementLoss uses coarse as structure constraint, not target
                         loss = self.criterion(refined_images, coarse_images)

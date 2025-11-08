@@ -80,7 +80,7 @@ class Trainer:
             self.optimizer.zero_grad()
             
             if self.use_amp:
-                with torch.cuda.amp.autocast():
+                with torch.amp.autocast('cuda'):
                     outputs = self.model(spikes)  # [B, 3, H, W]
                     # For unpaired training: use self-supervised reconstruction
                     # Improved target: use mean + variance for richer temporal information
@@ -180,7 +180,7 @@ class Trainer:
                 label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
                 
                 if self.use_amp:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda'):
                         outputs = self.model(spikes)
                         # Improved target: use mean + variance for richer temporal information
                         spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
