@@ -80,19 +80,31 @@ def combine_checkpoints(
     # Load Stage 3: Refine
     refine_config = config.get('refine', {})
     refine_model_config = refine_config.get('model', {})
+    refine_checkpoint_path = checkpoint_dir / 'refine_best.pth'
+    
+    # If checkpoint exists, it was trained with UNet (use_identity=False)
+    # If no checkpoint, use identity (just return coarse images)
+    use_identity = not refine_checkpoint_path.exists()
+    
     refine_model = RefinementNet(
         in_channels=refine_model_config.get('in_channels', 3),
         out_channels=refine_model_config.get('out_channels', 3),
         base_channels=refine_model_config.get('base_channels', 64),
-        num_down=refine_model_config.get('num_down', 4)
+        num_down=refine_model_config.get('num_down', 4),
+        use_identity=use_identity  # False if checkpoint exists (trained UNet), True if no checkpoint
     )
-    print(f"Loading refine model from {checkpoint_dir / 'refine_best.pth'}")
-    load_best_checkpoint(
-        str(checkpoint_dir),
-        refine_model,
-        device=device,
-        prefix='refine'
-    )
+    
+    if refine_checkpoint_path.exists():
+        print(f"Loading refine model from {checkpoint_dir / 'refine_best.pth'}")
+        load_best_checkpoint(
+            str(checkpoint_dir),
+            refine_model,
+            device=device,
+            prefix='refine',
+            strict=True  # Checkpoint should match model structure
+        )
+    else:
+        print("No refinement checkpoint found, using identity (just return coarse images)")
     
     # Create unified model
     combined_model = SpikeCLIPModel(
