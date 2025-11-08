@@ -55,9 +55,38 @@ def visualize_samples(
             for i in range(min(spikes.size(0), num_samples - samples_visualized)):
                 # Get images
                 spike_avg = spikes[i].mean(dim=0).cpu().numpy()  # [H, W]
-                spike_avg = (spike_avg - spike_avg.min()) / (spike_avg.max() - spike_avg.min() + 1e-8)
+                spike_avg_normalized = (spike_avg - spike_avg.min()) / (spike_avg.max() - spike_avg.min() + 1e-8)
+                
+                # Create training target (spike mean + variance, normalized) for comparison
+                spike_mean = spikes[i].mean(dim=0).cpu().numpy()  # [H, W]
+                spike_var = spikes[i].var(dim=0).cpu().numpy()  # [H, W]
+                spike_combined = spike_mean + 0.3 * spike_var  # [H, W]
+                spike_combined_min = spike_combined.min()
+                spike_combined_max = spike_combined.max()
+                spike_combined_norm = (spike_combined - spike_combined_min) / (spike_combined_max - spike_combined_min + 1e-8)
+                spike_target = np.stack([spike_combined_norm] * 3, axis=-1)  # [H, W, 3] - training target
+                
                 coarse_img = coarse_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
                 refined_img = refined_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
+                
+                # Compute Stage 1 reconstruction metrics (coarse vs training target)
+                coarse_tensor = coarse_images[i:i+1]  # [1, 3, H, W]
+                target_tensor = torch.from_numpy(spike_target).permute(2, 0, 1).unsqueeze(0).float()  # [1, 3, H, W]
+                target_tensor = target_tensor.to(coarse_tensor.device)
+                
+                stage1_psnr = compute_psnr(coarse_tensor, target_tensor)
+                stage1_ssim = compute_ssim(coarse_tensor, target_tensor)
+                stage1_l1 = compute_l1_error(coarse_tensor, target_tensor)
+                
+                # Compute Stage 3 refinement metrics (refined vs coarse)
+                refined_tensor = refined_images[i:i+1]
+                stage3_psnr = compute_psnr(refined_tensor, coarse_tensor)
+                stage3_ssim = compute_ssim(refined_tensor, coarse_tensor)
+                stage3_l1 = compute_l1_error(refined_tensor, coarse_tensor)
+                
+                # Error maps for visualization
+                stage1_error = np.abs(coarse_img - spike_target)
+                stage3_error = np.abs(refined_img - coarse_img)
                 
                 # Stage 2: Get similarity scores for this sample
                 image_feat = clip_features[i:i+1]  # [1, D]
@@ -78,31 +107,50 @@ def visualize_samples(
                 pred_label = top_labels_list[0]
                 pred_score = top_scores[0]
                 
-                # Create visualization with Stage 2
-                fig = plt.figure(figsize=(16, 8), constrained_layout=True)
-                gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
+                # Create visualization with reconstruction quality assessment
+                fig = plt.figure(figsize=(20, 10), constrained_layout=True)
+                gs = fig.add_gridspec(3, 5, hspace=0.3, wspace=0.3)
                 
-                # Row 1: Images
-                # Input spikes
+                # Row 1: Input and Targets
+                # Input spikes (temporal average)
                 ax1 = fig.add_subplot(gs[0, 0])
-                ax1.imshow(spike_avg, cmap='hot')
-                ax1.set_title(f'Input Spikes\nTrue: {true_label}')
+                ax1.imshow(spike_avg_normalized, cmap='hot')
+                ax1.set_title(f'Input: Spike Average\nTrue: {true_label}')
                 ax1.axis('off')
                 
-                # Stage 1: Coarse
-                ax2 = fig.add_subplot(gs[0, 1])
+                # Training target (spike mean + variance)
+                ax1b = fig.add_subplot(gs[0, 1])
+                ax1b.imshow(np.clip(spike_target, 0, 1))
+                ax1b.set_title('Training Target\n(Mean + 0.3×Var)')
+                ax1b.axis('off')
+                
+                # Stage 1: Coarse Reconstruction
+                ax2 = fig.add_subplot(gs[0, 2])
                 ax2.imshow(np.clip(coarse_img, 0, 1))
-                ax2.set_title('Stage 1: Coarse Reconstruction')
+                ax2.set_title(f'Stage 1: Coarse Reconstruction\nPSNR: {stage1_psnr:.2f}dB, SSIM: {stage1_ssim:.3f}, L1: {stage1_l1:.4f}')
                 ax2.axis('off')
                 
+                # Stage 1 Error Map
+                ax2e = fig.add_subplot(gs[0, 3])
+                ax2e.imshow(stage1_error.mean(axis=2), cmap='hot', vmin=0, vmax=0.5)
+                ax2e.set_title('Stage 1 Error Map\n(Coarse vs Target)')
+                ax2e.axis('off')
+                
                 # Stage 3: Refined
-                ax3 = fig.add_subplot(gs[0, 2])
+                ax3 = fig.add_subplot(gs[0, 4])
                 ax3.imshow(np.clip(refined_img, 0, 1))
-                ax3.set_title('Stage 3: Refined Image')
+                ax3.set_title(f'Stage 3: Refined\nPSNR: {stage3_psnr:.2f}dB, SSIM: {stage3_ssim:.3f}, L1: {stage3_l1:.4f}')
                 ax3.axis('off')
                 
+                # Row 2: Stage 3 Error and Stage 2 Classification
+                # Stage 3 Error Map
+                ax3e = fig.add_subplot(gs[1, 0])
+                ax3e.imshow(stage3_error.mean(axis=2), cmap='hot', vmin=0, vmax=0.5)
+                ax3e.set_title('Stage 3 Error Map\n(Refined vs Coarse)')
+                ax3e.axis('off')
+                
                 # Stage 2: Top-k predictions
-                ax4 = fig.add_subplot(gs[0, 3])
+                ax4 = fig.add_subplot(gs[1, 1])
                 colors = ['green' if idx == true_idx else 'red' if idx == pred_idx else 'gray' 
                          for idx in top_indices]
                 bars = ax4.barh(range(top_k), top_scores, color=colors)
@@ -116,7 +164,7 @@ def visualize_samples(
                     ax4.text(score + 0.01, j, f'{score:.3f}', va='center', fontsize=8)
                 
                 # Row 2: Stage 2 - All similarities (sorted)
-                ax5 = fig.add_subplot(gs[1, :2])
+                ax5 = fig.add_subplot(gs[1, 2:4])
                 sorted_indices = np.argsort(similarities)[::-1]
                 sorted_scores = similarities[sorted_indices]
                 sorted_labels_short = [labels[idx][:10] if labels else f"C{idx}" for idx in sorted_indices[:20]]  # Show top 20
@@ -130,15 +178,56 @@ def visualize_samples(
                 ax5.grid(axis='y', alpha=0.3)
                 
                 # Row 2: Stage 2 - Similarity distribution
-                ax6 = fig.add_subplot(gs[1, 2:])
+                ax6 = fig.add_subplot(gs[1, 4])
                 ax6.hist(similarities, bins=30, edgecolor='black', alpha=0.7)
                 ax6.axvline(true_score, color='green', linestyle='--', linewidth=2, label=f'True ({true_score:.3f})')
                 ax6.axvline(pred_score, color='red', linestyle='--', linewidth=2, label=f'Pred ({pred_score:.3f})')
                 ax6.set_xlabel('Similarity Score')
                 ax6.set_ylabel('Frequency')
-                ax6.set_title('Stage 2: Similarity Score Distribution')
+                ax6.set_title('Stage 2: Similarity Distribution')
                 ax6.legend()
                 ax6.grid(alpha=0.3)
+                
+                # Row 3: Side-by-side comparisons for better assessment
+                # Comparison: Target vs Coarse (Stage 1 quality)
+                ax7 = fig.add_subplot(gs[2, 0])
+                comparison_stage1 = np.hstack([np.clip(spike_target, 0, 1), np.clip(coarse_img, 0, 1)])
+                ax7.imshow(comparison_stage1)
+                ax7.axvline(spike_target.shape[1], color='yellow', linewidth=2)
+                ax7.set_title('Stage 1: Target (L) vs Coarse (R)')
+                ax7.axis('off')
+                
+                # Comparison: Coarse vs Refined (Stage 3 quality)
+                ax8 = fig.add_subplot(gs[2, 1])
+                comparison_stage3 = np.hstack([np.clip(coarse_img, 0, 1), np.clip(refined_img, 0, 1)])
+                ax8.imshow(comparison_stage3)
+                ax8.axvline(coarse_img.shape[1], color='yellow', linewidth=2)
+                ax8.set_title('Stage 3: Coarse (L) vs Refined (R)')
+                ax8.axis('off')
+                
+                # Metrics summary
+                ax9 = fig.add_subplot(gs[2, 2:])
+                ax9.axis('off')
+                metrics_text = f"""
+Reconstruction Quality Metrics:
+
+Stage 1 (Coarse vs Training Target):
+  PSNR: {stage1_psnr:.2f} dB (higher is better, >20 is good)
+  SSIM: {stage1_ssim:.3f} (higher is better, >0.7 is good)
+  L1 Error: {stage1_l1:.4f} (lower is better, <0.1 is good)
+
+Stage 3 (Refined vs Coarse):
+  PSNR: {stage3_psnr:.2f} dB (should be <inf if refining)
+  SSIM: {stage3_ssim:.3f} (should be <1.0 if refining)
+  L1 Error: {stage3_l1:.4f} (should be >0 if refining)
+
+Stage 2 Classification:
+  Prediction: {pred_label} (score: {pred_score:.3f})
+  Ground Truth: {true_label} (score: {true_score:.3f})
+  Status: {"✓ CORRECT" if pred_idx == true_idx else "✗ WRONG"}
+                """
+                ax9.text(0.1, 0.5, metrics_text, fontsize=10, family='monospace', 
+                        verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
                 
                 # tight_layout() not needed with constrained_layout=True
                 save_path = output_dir / f'sample_{samples_visualized:03d}_pipeline.png'

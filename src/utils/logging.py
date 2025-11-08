@@ -80,7 +80,7 @@ def log_training_metrics(
     output_dir: str = "outputs/logs",
     stage: str = "coarse"
 ) -> None:
-    """Append training metrics to log file."""
+    """Log training metrics to file. Overwrites on epoch 0 (fresh log per run), appends for subsequent epochs."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -96,17 +96,24 @@ def log_training_metrics(
             log_entry += f" | Power: {gpu_metrics.get('power_usage_w', 0):.2f} W"
     log_entry += "\n"
     
-    # Append to file
-    with open(log_file, 'a') as f:
+    # Overwrite on first epoch (epoch 0), append for subsequent epochs
+    # This ensures each training run starts with a fresh log file
+    mode = 'w' if epoch == 0 else 'a'
+    with open(log_file, mode) as f:
         f.write(log_entry)
     
-    # Also save as JSON (append to list)
+    # Also save as JSON (overwrite on first epoch, append for subsequent epochs)
     json_file = output_dir / f'{stage}_train_log.json'
-    if json_file.exists():
-        with open(json_file, 'r') as f:
-            logs = json.load(f)
-    else:
+    if epoch == 0:
+        # Start fresh log on epoch 0
         logs = {'entries': []}
+    else:
+        # Load existing log and append
+        if json_file.exists():
+            with open(json_file, 'r') as f:
+                logs = json.load(f)
+        else:
+            logs = {'entries': []}
     
     entry = {
         'epoch': epoch,
