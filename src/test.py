@@ -79,7 +79,7 @@ def visualize_samples(
                 pred_score = top_scores[0]
                 
                 # Create visualization with Stage 2
-                fig = plt.figure(figsize=(16, 8))
+                fig = plt.figure(figsize=(16, 8), constrained_layout=True)
                 gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
                 
                 # Row 1: Images
@@ -140,7 +140,7 @@ def visualize_samples(
                 ax6.legend()
                 ax6.grid(alpha=0.3)
                 
-                plt.tight_layout()
+                # tight_layout() not needed with constrained_layout=True
                 save_path = output_dir / f'sample_{samples_visualized:03d}_pipeline.png'
                 plt.savefig(save_path, dpi=150, bbox_inches='tight')
                 plt.close()
