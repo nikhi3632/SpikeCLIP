@@ -177,6 +177,7 @@ class Trainer:
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 spikes = batch[0].to(self.device)
+                label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
                 
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
@@ -192,7 +193,11 @@ class Trainer:
                         spike_combined = (spike_combined - spike_min) / spike_range
                         spike_combined = torch.clamp(spike_combined, 0, 1)
                         target = spike_combined.repeat(1, 3, 1, 1)
-                        loss = self.criterion(outputs, target)
+                        # Pass label_indices for semantic alignment loss if available
+                        if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
+                            loss = self.criterion(outputs, target, label_indices)
+                        else:
+                            loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
                     # Improved target: use mean + variance for richer temporal information
@@ -206,7 +211,11 @@ class Trainer:
                     spike_combined = (spike_combined - spike_min) / spike_range
                     spike_combined = torch.clamp(spike_combined, 0, 1)
                     target = spike_combined.repeat(1, 3, 1, 1)
-                    loss = self.criterion(outputs, target)
+                    # Pass label_indices for semantic alignment loss if available
+                    if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
+                        loss = self.criterion(outputs, target, label_indices)
+                    else:
+                        loss = self.criterion(outputs, target)
                 
                 total_loss += loss.item()
                 num_batches += 1
