@@ -182,9 +182,10 @@ class ReconstructionLoss(nn.Module):
             text_features = self.text_embeddings[label_indices]  # [B, clip_dim]
             
             # Semantic loss: maximize similarity between image and text features
-            # Use negative cosine similarity (we want high similarity, so minimize negative similarity)
-            similarities = (image_features * text_features).sum(dim=1)  # [B] cosine similarity
-            semantic_loss = -similarities.mean()  # Negative because we want to maximize similarity
+            # Use 1 - similarity so loss is positive and minimized when similarity is high
+            # Similarity is in [-1, 1] range, so 1 - similarity is in [0, 2] range
+            similarities = (image_features * text_features).sum(dim=1)  # [B] cosine similarity in [-1, 1]
+            semantic_loss = (1.0 - similarities).mean()  # Positive loss: 0 when similarity=1, 2 when similarity=-1
             
             reconstruction_loss = reconstruction_loss + self.semantic_weight * semantic_loss
         
