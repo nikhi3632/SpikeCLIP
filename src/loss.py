@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import clip
 
 class RefinementLoss(nn.Module):
     """Loss for refinement stage - encourages improvement without matching target."""
@@ -76,14 +77,17 @@ class RefinementLoss(nn.Module):
         return total_loss
 
 class ReconstructionLoss(nn.Module):
-    """L1 + L2 loss for image reconstruction with optional perceptual loss."""
-    def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0, perceptual_weight=0.0, clip_model=None):
+    """L1 + L2 loss for image reconstruction with optional perceptual and semantic loss."""
+    def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0, perceptual_weight=0.0, 
+                 semantic_weight=0.0, clip_model=None, labels=None):
         super().__init__()
         self.l1_weight = l1_weight
         self.l2_weight = l2_weight
         self.identity_penalty = identity_penalty
         self.perceptual_weight = perceptual_weight
+        self.semantic_weight = semantic_weight
         self.clip_model = clip_model
+        self.labels = labels
         
         # Use CLIP for perceptual loss if available (better than simple conv layers)
         if perceptual_weight > 0 and clip_model is not None:
@@ -102,11 +106,29 @@ class ReconstructionLoss(nn.Module):
         else:
             self.feature_extractor = None
             self.use_clip_perceptual = False
+        
+        # Pre-compute text embeddings for semantic loss if labels are provided
+        if semantic_weight > 0 and clip_model is not None and labels is not None:
+            with torch.no_grad():
+                # Create text prompts like "a photo of a {label}"
+                text_prompts = [f"a photo of a {label}" for label in labels]
+                text_tokens = clip.tokenize(text_prompts)
+                # Store on CPU, will move to device when needed
+                self.text_tokens = text_tokens
+                self.text_embeddings = None  # Will be computed on first forward with device
+                self.labels_list = labels
+            self.use_semantic = True
+        else:
+            self.use_semantic = False
+            self.text_tokens = None
+            self.text_embeddings = None
+            self.labels_list = None
     
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, pred: torch.Tensor, target: torch.Tensor, label_indices: torch.Tensor = None) -> torch.Tensor:
         """
         pred: [B, C, H, W] predicted image
         target: [B, C, H, W] target image
+        label_indices: [B] optional label indices for semantic alignment
         """
         l1_loss = F.l1_loss(pred, target)
         l2_loss = F.mse_loss(pred, target)
@@ -121,8 +143,6 @@ class ReconstructionLoss(nn.Module):
                 target_normalized = F.interpolate(torch.clamp(target, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
                 
                 # Extract CLIP features (CLIP model is frozen, but gradients flow through images)
-                # For refinement: we want refined images to have better CLIP features than coarse
-                # So we compare refined vs coarse CLIP features
                 pred_features = self.feature_extractor(pred_normalized)  # [B, clip_dim]
                 target_features = self.feature_extractor(target_normalized)  # [B, clip_dim]
                 
@@ -130,8 +150,7 @@ class ReconstructionLoss(nn.Module):
                 pred_features = F.normalize(pred_features, dim=-1)
                 target_features = F.normalize(target_features, dim=-1)
                 
-                # Perceptual loss: encourage refined images to have better CLIP features
-                # Use MSE loss on normalized CLIP features (encourages refinement while maintaining semantic alignment)
+                # Perceptual loss: encourage images to have meaningful CLIP features
                 perceptual_loss = F.mse_loss(pred_features, target_features)
             else:
                 # Fallback: simple feature extractor
@@ -140,6 +159,34 @@ class ReconstructionLoss(nn.Module):
                 perceptual_loss = F.mse_loss(pred_features, target_features)
             
             reconstruction_loss = reconstruction_loss + self.perceptual_weight * perceptual_loss
+        
+        # Add semantic alignment loss to improve semantic accuracy
+        # This uses CLIP to ensure reconstructed images are semantically aligned with text labels
+        if self.semantic_weight > 0 and self.use_semantic and label_indices is not None and self.clip_model is not None:
+            # Normalize predicted images for CLIP
+            pred_normalized = F.interpolate(torch.clamp(pred, 0, 1), size=(224, 224), mode='bilinear', align_corners=False)
+            
+            # Get image features from CLIP
+            image_features = self.clip_model.encode_image(pred_normalized)  # [B, clip_dim]
+            image_features = F.normalize(image_features, dim=-1)
+            
+            # Get text features for the labels
+            # Compute text embeddings on the fly (they're cached but we need them on the right device)
+            if self.text_embeddings is None or self.text_embeddings.device != pred.device:
+                text_tokens = self.text_tokens.to(pred.device)
+                with torch.no_grad():
+                    self.text_embeddings = self.clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                    self.text_embeddings = F.normalize(self.text_embeddings, dim=-1)
+            
+            # Select text features for the current batch labels
+            text_features = self.text_embeddings[label_indices]  # [B, clip_dim]
+            
+            # Semantic loss: maximize similarity between image and text features
+            # Use negative cosine similarity (we want high similarity, so minimize negative similarity)
+            similarities = (image_features * text_features).sum(dim=1)  # [B] cosine similarity
+            semantic_loss = -similarities.mean()  # Negative because we want to maximize similarity
+            
+            reconstruction_loss = reconstruction_loss + self.semantic_weight * semantic_loss
         
         # Add penalty for identity mapping (when pred == target)
         # This encourages the model to actually refine, not just copy
@@ -185,9 +232,11 @@ def get_loss_fn(loss_type: str = "reconstruction", **kwargs):
     if loss_type == "reconstruction":
         # Filter out identity_penalty for coarse stage (only use for refinement)
         filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'identity_penalty' or v > 0}
-        # Extract clip_model if provided
+        # Extract clip_model and labels if provided
         clip_model = filtered_kwargs.pop('clip_model', None)
+        labels = filtered_kwargs.pop('labels', None)
         filtered_kwargs['clip_model'] = clip_model
+        filtered_kwargs['labels'] = labels
         return ReconstructionLoss(**filtered_kwargs)
     elif loss_type == "refinement":
         # Use RefinementLoss for Stage 3

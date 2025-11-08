@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import argparse
+import clip
 from config_loader import load_config
 from data_loader import get_loader
 from models.coarse_reconstruction import CoarseSNN
@@ -101,12 +102,34 @@ def main():
         out_channels=model_config.get('out_channels', 3)
     )
     
+    # Load CLIP model for perceptual loss if needed
+    clip_model = None
+    perceptual_weight = loss_config.get('perceptual_weight', 0.0)
+    if perceptual_weight > 0:
+        try:
+            print("Loading CLIP model for perceptual loss...")
+            clip_model, _ = clip.load("ViT-B/32", device=device)
+            # Ensure CLIP model is in float32 (not half precision) to avoid dtype mismatches
+            clip_model = clip_model.float()
+            clip_model.eval()
+            # Freeze CLIP model
+            for param in clip_model.parameters():
+                param.requires_grad = False
+            print("CLIP model loaded successfully for perceptual loss")
+        except Exception as e:
+            print(f"Warning: Failed to load CLIP model for perceptual loss ({e}). Using fallback feature extractor.")
+            clip_model = None
+    
     # Loss
+    semantic_weight = loss_config.get('semantic_weight', 0.0)
     criterion = get_loss_fn(
         loss_config.get('type', 'reconstruction'),
         l1_weight=loss_config.get('l1_weight', 1.0),
         l2_weight=loss_config.get('l2_weight', 1.0),
-        perceptual_weight=loss_config.get('perceptual_weight', 0.0)
+        perceptual_weight=perceptual_weight,
+        semantic_weight=semantic_weight,  # Semantic alignment loss weight
+        clip_model=clip_model,  # Pass CLIP model for perceptual and semantic loss
+        labels=labels  # Pass labels for semantic alignment
     )
     # Ensure loss function (and its feature extractor) is on the correct device
     criterion = criterion.to(device)

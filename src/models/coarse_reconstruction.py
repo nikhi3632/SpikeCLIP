@@ -14,10 +14,13 @@ class CoarseSNN(nn.Module):
         super().__init__()
         self.time_steps = time_steps
 
-        # Enhanced encoder with more capacity
-        # Layer 1: 224x224 -> 224x224
+        # Enhanced encoder with more capacity and better feature extraction
+        # Layer 1: 224x224 -> 224x224 (extract more features)
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv for richer features
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
@@ -26,10 +29,16 @@ class CoarseSNN(nn.Module):
             nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(64),
             LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # Additional conv
+            nn.BatchNorm2d(64),
+            LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Layer 3: 112x112 -> 56x56
         self.enc3 = nn.Sequential(
             nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(128),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
@@ -38,19 +47,28 @@ class CoarseSNN(nn.Module):
             nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(256),
             LIFNode(tau=tau, v_threshold=v_threshold),
-        )
-
-        # Bottleneck
-        self.bottleneck = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(256),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
 
-        # Decoder with skip connections (U-Net style)
+        # Enhanced bottleneck with more capacity
+        self.bottleneck = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),  # Increase channels
+            nn.BatchNorm2d(512),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.Conv2d(512, 256, kernel_size=3, padding=1),  # Back to 256
+            nn.BatchNorm2d(256),
+            LIFNode(tau=tau, v_threshold=v_threshold),
+        )
+
+        # Enhanced decoder with skip connections (U-Net style)
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
         )
@@ -59,16 +77,25 @@ class CoarseSNN(nn.Module):
             nn.ConvTranspose2d(256, 64, kernel_size=4, stride=2, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # Additional conv
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
             nn.ConvTranspose2d(128, 32, kernel_size=4, stride=2, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
         )
         # Final layer: 224x224 -> 224x224
         self.dec1 = nn.Sequential(
             nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32*2 from skip
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv for better features
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
@@ -87,14 +114,23 @@ class CoarseSNN(nn.Module):
         # Reset SNN state each forward so batches are independent
         functional.reset_net(self)
 
-        # Temporal aggregation: average spikes over time dimension
-        # This provides a coarse intensity estimate from spike events
+        # Improved temporal aggregation: use mean + variance for richer features
+        # This provides better intensity and temporal variation information
         # [B, T, H, W] -> [B, 1, H, W]
-        # Note: For a more sophisticated SNN, we could process temporal sequences
-        # through the network, but averaging is a reasonable baseline
-        x = spikes.mean(dim=1, keepdim=True)
+        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+        
+        # Combine mean and variance for richer temporal information
+        # Variance helps capture temporal dynamics and motion
+        # Weight variance less to avoid over-emphasizing temporal variation
+        x = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
         
         # Normalize to [0, 1] range for better training stability
+        # Use per-sample normalization to preserve relative intensities
+        x_min = x.view(x.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+        x_max = x.view(x.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+        x_range = x_max - x_min + 1e-8
+        x = (x - x_min) / x_range
         x = torch.clamp(x, 0, 1)
 
         # Encoder with skip connections

@@ -23,13 +23,14 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.1  # Add perceptual loss to encourage meaningful feature learning
+    perceptual_weight: 0.5  # Increased from 0.1 for stronger semantic guidance
+    semantic_weight: 0.3  # Semantic alignment loss - ensures reconstructed images match text labels
   
   # Training parameters
   training:
-    epochs: 30  # Increased from 10 for better convergence
+    epochs: 50  # Increased from 30 for better convergence and semantic learning
     batch_size: 8
-    learning_rate: 0.0001  # Reduced from 0.001 to prevent mode collapse
+    learning_rate: 0.0002  # Increased from 0.0001 for faster learning while avoiding collapse
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -37,7 +38,7 @@ coarse:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better regularization
-    lr: 0.0001  # Can override training.learning_rate
+    lr: 0.0002  # Can override training.learning_rate (increased from 0.0001)
     weight_decay: 0.0001  # Added weight decay to prevent collapse
     momentum: 0.9  # Only for SGD
   

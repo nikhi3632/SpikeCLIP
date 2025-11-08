@@ -69,6 +69,7 @@ class Trainer:
         for batch_idx, batch in enumerate(pbar):
             # Get batch data (adjust based on your data format)
             spikes = batch[0].to(self.device)  # [B, T, H, W]
+            label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
             batch_size = spikes.size(0)
             
             # Track latency
@@ -82,20 +83,28 @@ class Trainer:
                 with torch.cuda.amp.autocast():
                     outputs = self.model(spikes)  # [B, 3, H, W]
                     # For unpaired training: use self-supervised reconstruction
-                    # Target is a normalized version of spike temporal average
-                    # This encourages the model to learn meaningful image structure from spikes
-                    # Self-supervised target: temporal average of spikes
-                    # For self-supervised learning, this is a reasonable proxy target
-                    # Low loss (~0.03-0.04) is expected - the key is verifying outputs are diverse
-                    spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    # Global normalization to preserve relative intensities
-                    spike_min = spike_avg.min()
-                    spike_max = spike_avg.max()
+                    # Improved target: use mean + variance for richer temporal information
+                    # This encourages the model to learn both intensity and temporal dynamics
+                    # Self-supervised target: temporal mean + variance of spikes
+                    spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+                    
+                    # Combine mean and variance (weight variance less to avoid over-emphasis)
+                    spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
+                    
+                    # Per-sample normalization to preserve relative intensities within each sample
+                    # This helps maintain semantic structure while normalizing
+                    spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
                     spike_range = spike_max - spike_min + 1e-8
-                    spike_avg = (spike_avg - spike_min) / spike_range
-                    spike_avg = torch.clamp(spike_avg, 0, 1)
-                    target = spike_avg.repeat(1, 3, 1, 1)
-                    loss = self.criterion(outputs, target)
+                    spike_combined = (spike_combined - spike_min) / spike_range
+                    spike_combined = torch.clamp(spike_combined, 0, 1)
+                    target = spike_combined.repeat(1, 3, 1, 1)
+                    # Pass label_indices for semantic alignment loss if available
+                    if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
+                        loss = self.criterion(outputs, target, label_indices)
+                    else:
+                        loss = self.criterion(outputs, target)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -105,16 +114,27 @@ class Trainer:
                 self.scaler.update()
             else:
                 outputs = self.model(spikes)
-                # Self-supervised target: temporal average of spikes
-                spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                # Global normalization to preserve relative intensities
-                spike_min = spike_avg.min()
-                spike_max = spike_avg.max()
+                # Improved target: use mean + variance for richer temporal information
+                # This encourages the model to learn both intensity and temporal dynamics
+                spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+                
+                # Combine mean and variance (weight variance less to avoid over-emphasis)
+                spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
+                
+                # Per-sample normalization to preserve relative intensities within each sample
+                # This helps maintain semantic structure while normalizing
+                spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
                 spike_range = spike_max - spike_min + 1e-8
-                spike_avg = (spike_avg - spike_min) / spike_range
-                spike_avg = torch.clamp(spike_avg, 0, 1)
-                target = spike_avg.repeat(1, 3, 1, 1)
-                loss = self.criterion(outputs, target)
+                spike_combined = (spike_combined - spike_min) / spike_range
+                spike_combined = torch.clamp(spike_combined, 0, 1)
+                target = spike_combined.repeat(1, 3, 1, 1)
+                # Pass label_indices for semantic alignment loss if available
+                if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
+                    loss = self.criterion(outputs, target, label_indices)
+                else:
+                    loss = self.criterion(outputs, target)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -161,25 +181,31 @@ class Trainer:
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         outputs = self.model(spikes)
-                        # Self-supervised target: temporal average of spikes
-                        spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                        spike_min = spike_avg.min()
-                        spike_max = spike_avg.max()
+                        # Improved target: use mean + variance for richer temporal information
+                        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+                        spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
+                        # Per-sample normalization
+                        spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                        spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
                         spike_range = spike_max - spike_min + 1e-8
-                        spike_avg = (spike_avg - spike_min) / spike_range
-                        spike_avg = torch.clamp(spike_avg, 0, 1)
-                        target = spike_avg.repeat(1, 3, 1, 1)
+                        spike_combined = (spike_combined - spike_min) / spike_range
+                        spike_combined = torch.clamp(spike_combined, 0, 1)
+                        target = spike_combined.repeat(1, 3, 1, 1)
                         loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    # Self-supervised target: temporal average of spikes
-                    spike_avg = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-                    spike_min = spike_avg.min()
-                    spike_max = spike_avg.max()
+                    # Improved target: use mean + variance for richer temporal information
+                    spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+                    spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+                    spike_combined = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
+                    # Per-sample normalization
+                    spike_min = spike_combined.view(spike_combined.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+                    spike_max = spike_combined.view(spike_combined.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
                     spike_range = spike_max - spike_min + 1e-8
-                    spike_avg = (spike_avg - spike_min) / spike_range
-                    spike_avg = torch.clamp(spike_avg, 0, 1)
-                    target = spike_avg.repeat(1, 3, 1, 1)
+                    spike_combined = (spike_combined - spike_min) / spike_range
+                    spike_combined = torch.clamp(spike_combined, 0, 1)
+                    target = spike_combined.repeat(1, 3, 1, 1)
                     loss = self.criterion(outputs, target)
                 
                 total_loss += loss.item()
