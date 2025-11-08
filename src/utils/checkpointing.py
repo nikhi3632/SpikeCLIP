@@ -51,15 +51,27 @@ def load_checkpoint(
         strict: If False, allows missing keys (useful for loading old checkpoints with new model structure)
     """
     checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint_state = checkpoint['model_state_dict']
     
     # Load state dict with optional strict mode
     if strict:
-        model.load_state_dict(checkpoint['model_state_dict'])
+        # For strict mode, filter out text_encoder keys (they're initialized from CLIP, not saved)
+        # Only load keys that exist in both checkpoint and model (excluding text_encoder)
+        model_state = model.state_dict()
+        filtered_checkpoint_state = {k: v for k, v in checkpoint_state.items() 
+                                     if k in model_state and 'text_encoder' not in k}
+        model.load_state_dict(filtered_checkpoint_state, strict=False)
+        # text_encoder will use its default initialization from CLIP
     else:
-        # Load with strict=False to handle missing keys (e.g., text_encoder added later)
-        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-        if missing_keys:
-            print(f"Warning: Missing keys in checkpoint (will use default initialization): {missing_keys[:5]}...")
+        # Load with strict=False to handle missing keys
+        missing_keys, unexpected_keys = model.load_state_dict(checkpoint_state, strict=False)
+        
+        # Filter out text_encoder keys from missing_keys (they're expected to be missing)
+        # text_encoder is initialized from CLIP, not saved in checkpoints
+        missing_keys_filtered = [k for k in missing_keys if 'text_encoder' not in k]
+        
+        if missing_keys_filtered:
+            print(f"Warning: Missing keys in checkpoint (will use default initialization): {missing_keys_filtered[:5]}...")
         if unexpected_keys:
             print(f"Warning: Unexpected keys in checkpoint (ignored): {unexpected_keys[:5]}...")
     
