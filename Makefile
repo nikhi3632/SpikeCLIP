@@ -175,12 +175,6 @@ test:
 	@cd src && python3 test.py --config ../$(CONFIG) \
 		--checkpoint outputs/checkpoints/ucaltech/combined_model.pth
 
-plot-metrics:
-	@echo "Plotting metrics from log files..."
-	@cd src && python3 visualization/plot_metrics.py \
-		--log-dir outputs/logs \
-		--output-dir outputs/visualizations
-
 # Remove Python bytecode caches and compiled files across the repo
 clean:
 	@echo "Cleaning __pycache__ directories and *.pyc/*.pyo files..."
