@@ -79,6 +79,9 @@ def main():
     
     if args.stage == 'all':
         print("Training all stages sequentially...")
+        print("Stage 1 (Coarse) → Stage 2 (Prompt) → Stage 3 (Refine)")
+        print("Stage 2 depends on Stage 1 (needs coarse checkpoint)")
+        print("Stage 3 depends on Stage 1 AND Stage 2 (needs coarse + prompt checkpoints)")
         for stage in ['coarse', 'prompt', 'refine']:
             run_stage(stage, args.config, extra_args, checkpoint_dir)
     else:

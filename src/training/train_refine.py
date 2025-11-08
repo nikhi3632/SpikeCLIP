@@ -60,6 +60,7 @@ class RefineTrainer(Trainer):
             
             # Stage 3: Refine images
             # According to paper: L_total = L_class + λ*L_prompt (λ=100)
+            # Stage 3 uses Stage 2's learned HQ/LQ prompts for prompt loss
             if self.use_amp:
                 with torch.amp.autocast('cuda'):
                     refined_images = self.model(coarse_images)  # [B, 3, H, W]
@@ -71,7 +72,8 @@ class RefineTrainer(Trainer):
                     image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
                     image_features = F.normalize(image_features, dim=-1)
                     
-                    # Prompt Loss: Alignment with HQ prompts
+                    # Prompt Loss: Alignment with HQ prompts from Stage 2
+                    # Uses learned HQ/LQ prompts from Stage 2 (hq_lq_prompt_model)
                     hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                     prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                     
@@ -81,6 +83,7 @@ class RefineTrainer(Trainer):
                     class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                     
                     # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                    # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                     loss = class_loss + self.prompt_weight * prompt_loss
                 
                 self.scaler.scale(loss).backward()
@@ -99,7 +102,8 @@ class RefineTrainer(Trainer):
                 image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
                 image_features = F.normalize(image_features, dim=-1)
                 
-                # Prompt Loss: Alignment with HQ prompts
+                # Prompt Loss: Alignment with HQ prompts from Stage 2
+                # Uses learned HQ/LQ prompts from Stage 2 (hq_lq_prompt_model)
                 hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                 prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                 
@@ -109,6 +113,7 @@ class RefineTrainer(Trainer):
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
                 # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                 loss = class_loss + self.prompt_weight * prompt_loss
                 
                 loss.backward()
@@ -168,7 +173,8 @@ class RefineTrainer(Trainer):
                 image_features = self.clip_model.encode_image(refined_normalized)  # [B, clip_dim]
                 image_features = F.normalize(image_features, dim=-1)
                 
-                # Prompt Loss: Alignment with HQ prompts
+                # Prompt Loss: Alignment with HQ prompts from Stage 2
+                # Uses learned HQ/LQ prompts from Stage 2 (hq_lq_prompt_model)
                 hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                 prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                 
@@ -178,6 +184,7 @@ class RefineTrainer(Trainer):
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
                 # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                 loss = class_loss + self.prompt_weight * prompt_loss
                 
                 total_loss += loss.item()
@@ -195,7 +202,8 @@ def main():
     parser.add_argument('--use-amp', action='store_true', help='Use mixed precision')
     parser.add_argument('--resume', type=str, default=None, help='Resume from checkpoint')
     parser.add_argument('--output-dir', type=str, default='outputs/checkpoints/ucaltech', help='Output directory')
-    parser.add_argument('--coarse-checkpoint', type=str, required=True, help='Path to coarse model checkpoint directory')
+    parser.add_argument('--coarse-checkpoint', type=str, required=True, 
+                       help='Path to coarse model checkpoint directory (Stage 1 output)')
     
     args = parser.parse_args()
     
@@ -314,6 +322,10 @@ def main():
         text_features = F.normalize(text_features, dim=-1)
     
     # Load HQ/LQ prompt model from Stage 2 (for prompt loss)
+    # Stage 3 depends on Stage 2 because:
+    # 1. Stage 3 uses HQ/LQ prompts learned in Stage 2 for prompt loss
+    # 2. According to paper: L_total = L_class + λ*L_prompt (λ=100)
+    # 3. The prompt loss aligns refined images with HQ prompts from Stage 2
     prompt_checkpoint_dir = Path(output_config.get('checkpoint_dir', 'outputs/checkpoints/ucaltech'))
     hq_lq_prompt_model = HQ_LQ_PromptAdapter(
         clip_model_name=config.get('prompt', {}).get('model', {}).get('clip_model_name', 'ViT-B/32'),
@@ -321,7 +333,8 @@ def main():
         freeze_image_encoder=True
     )
     
-    print(f"Loading HQ/LQ prompt model from {prompt_checkpoint_dir}")
+    print(f"Loading HQ/LQ prompt model from Stage 2: {prompt_checkpoint_dir}")
+    print("  (Stage 3 needs Stage 2's learned HQ/LQ prompts for prompt loss)")
     try:
         load_best_checkpoint(
             str(prompt_checkpoint_dir),
@@ -329,8 +342,10 @@ def main():
             device=device,
             prefix='prompt'
         )
+        print("  ✓ Successfully loaded Stage 2 prompt checkpoint")
     except FileNotFoundError as e:
-        print(f"Warning: Failed to load HQ/LQ prompt checkpoint ({e}). Using random initialization.")
+        print(f"  ⚠️  Warning: Failed to load HQ/LQ prompt checkpoint ({e})")
+        print("  ⚠️  Using random initialization (Stage 2 must be trained first!)")
     hq_lq_prompt_model.eval()
     for param in hq_lq_prompt_model.parameters():
         param.requires_grad = False
