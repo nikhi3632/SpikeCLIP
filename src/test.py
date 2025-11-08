@@ -33,6 +33,17 @@ def visualize_samples(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Log file for visualization metrics
+    log_file = output_dir / "visual.log"
+    with open(log_file, 'w') as f:
+        f.write("=" * 80 + "\n")
+        f.write("VISUALIZATION METRICS LOG\n")
+        f.write("=" * 80 + "\n")
+        f.write(f"Timestamp: {time.ctime()}\n")
+        f.write(f"Device: {device}\n")
+        f.write(f"Number of samples: {num_samples}\n")
+        f.write("=" * 80 + "\n\n")
+    
     samples_visualized = 0
     
     with torch.no_grad():
@@ -234,9 +245,42 @@ Stage 2 Classification:
                 plt.savefig(save_path, dpi=150, bbox_inches='tight')
                 plt.close()
                 
+                # Log metrics to file
+                with open(log_file, 'a') as f:
+                    f.write(f"\n--- Sample {samples_visualized:03d} ---\n")
+                    f.write(f"True Label: {true_label}\n")
+                    f.write(f"Predicted Label: {pred_label} {'(CORRECT)' if pred_idx == true_idx else '(WRONG)'}\n")
+                    f.write(f"Prediction Score: {pred_score:.4f}\n")
+                    f.write(f"True Label Score: {true_score:.4f}\n")
+                    f.write(f"\nStage 1 Reconstruction (Coarse vs Training Target):\n")
+                    f.write(f"  PSNR: {stage1_psnr:.4f} dB (higher is better, >20 is good)\n")
+                    f.write(f"  SSIM: {stage1_ssim:.4f} (higher is better, >0.7 is good)\n")
+                    f.write(f"  L1 Error: {stage1_l1:.4f} (lower is better, <0.1 is good)\n")
+                    f.write(f"\nStage 3 Refinement (Refined vs Coarse):\n")
+                    f.write(f"  PSNR: {stage3_psnr:.4f} dB (should be <inf if refining)\n")
+                    f.write(f"  SSIM: {stage3_ssim:.4f} (should be <1.0 if refining)\n")
+                    f.write(f"  L1 Error: {stage3_l1:.4f} (should be >0 if refining)\n")
+                    f.write(f"\nStage 2 Classification:\n")
+                    f.write(f"  Top-{top_k} Predictions:\n")
+                    for j, (idx, score, label) in enumerate(zip(top_indices, top_scores, top_labels_list)):
+                        marker = "✓" if idx == true_idx else "→" if j == 0 else " "
+                        f.write(f"    {marker} {label}: {score:.4f}\n")
+                    f.write("-" * 80 + "\n")
+                
                 samples_visualized += 1
     
+    # Write summary to log file
+    with open(log_file, 'a') as f:
+        f.write(f"\n{'=' * 80}\n")
+        f.write(f"SUMMARY\n")
+        f.write(f"{'=' * 80}\n")
+        f.write(f"Total samples visualized: {samples_visualized}\n")
+        f.write(f"Visualizations saved to: {output_dir}\n")
+        f.write(f"Log file: {log_file}\n")
+        f.write(f"{'=' * 80}\n")
+    
     print(f"Visualized {samples_visualized} samples to {output_dir}")
+    print(f"Metrics logged to {log_file}")
 
 def main():
     parser = argparse.ArgumentParser(description='Test combined model with visualization')
