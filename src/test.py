@@ -25,9 +25,10 @@ def visualize_samples(
     test_loader,
     device,
     num_samples: int = 10,
-    output_dir: str = "outputs/visualizations"
+    output_dir: str = "outputs/visualizations",
+    labels: list = None
 ):
-    """Visualize sample predictions from the pipeline."""
+    """Visualize sample predictions from the pipeline including Stage 2 classification."""
     model.eval()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,40 +42,103 @@ def visualize_samples(
             
             spikes = batch[0].to(device)  # [B, T, H, W]
             label_indices = batch[2].to(device)  # [B]
+            batch_labels = batch[1]  # List of label strings
             
-            # Forward pass (clip_features not needed for visualization)
-            refined_images, _, coarse_images = model(spikes, label_indices)
+            # Forward pass
+            refined_images, clip_features, coarse_images = model(spikes, label_indices)
+            
+            # Get all text embeddings for Stage 2 visualization
+            all_label_indices = torch.arange(model.prompt_model.num_classes, device=device)
+            all_text_features = model.prompt_model.get_text_embeddings(all_label_indices)
             
             # Visualize each sample in batch
             for i in range(min(spikes.size(0), num_samples - samples_visualized)):
                 # Get images
                 spike_avg = spikes[i].mean(dim=0).cpu().numpy()  # [H, W]
+                spike_avg = (spike_avg - spike_avg.min()) / (spike_avg.max() - spike_avg.min() + 1e-8)
                 coarse_img = coarse_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
                 refined_img = refined_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
                 
-                # Create visualization
-                _, axes = plt.subplots(1, 4, figsize=(16, 4))
+                # Stage 2: Get similarity scores for this sample
+                image_feat = clip_features[i:i+1]  # [1, D]
+                similarities = torch.matmul(image_feat, all_text_features.t()).squeeze(0)  # [num_classes]
+                similarities = similarities.cpu().numpy()
                 
-                # Spike average
-                axes[0].imshow(spike_avg, cmap='gray')
-                axes[0].set_title('Input Spikes (Average)')
-                axes[0].axis('off')
+                # Get top-k predictions
+                top_k = 5
+                top_indices = np.argsort(similarities)[-top_k:][::-1]
+                top_scores = similarities[top_indices]
+                top_labels_list = [labels[idx] if labels else f"Class {idx}" for idx in top_indices]
                 
-                # Coarse image
-                axes[1].imshow(coarse_img)
-                axes[1].set_title('Stage 1: Coarse')
-                axes[1].axis('off')
+                # Get ground truth index
+                true_idx = label_indices[i].item()
+                true_label = batch_labels[i]
+                true_score = similarities[true_idx]
+                pred_idx = top_indices[0]
+                pred_label = top_labels_list[0]
+                pred_score = top_scores[0]
                 
-                # Refined image
-                axes[2].imshow(refined_img)
-                axes[2].set_title('Stage 3: Refined')
-                axes[2].axis('off')
+                # Create visualization with Stage 2
+                fig = plt.figure(figsize=(16, 8))
+                gs = fig.add_gridspec(2, 4, hspace=0.3, wspace=0.3)
                 
-                # Difference
-                diff = np.abs(refined_img - coarse_img)
-                axes[3].imshow(diff)
-                axes[3].set_title('Difference (Refined - Coarse)')
-                axes[3].axis('off')
+                # Row 1: Images
+                # Input spikes
+                ax1 = fig.add_subplot(gs[0, 0])
+                ax1.imshow(spike_avg, cmap='hot')
+                ax1.set_title(f'Input Spikes\nTrue: {true_label}')
+                ax1.axis('off')
+                
+                # Stage 1: Coarse
+                ax2 = fig.add_subplot(gs[0, 1])
+                ax2.imshow(np.clip(coarse_img, 0, 1))
+                ax2.set_title('Stage 1: Coarse Reconstruction')
+                ax2.axis('off')
+                
+                # Stage 3: Refined
+                ax3 = fig.add_subplot(gs[0, 2])
+                ax3.imshow(np.clip(refined_img, 0, 1))
+                ax3.set_title('Stage 3: Refined Image')
+                ax3.axis('off')
+                
+                # Stage 2: Top-k predictions
+                ax4 = fig.add_subplot(gs[0, 3])
+                colors = ['green' if idx == true_idx else 'red' if idx == pred_idx else 'gray' 
+                         for idx in top_indices]
+                bars = ax4.barh(range(top_k), top_scores, color=colors)
+                ax4.set_yticks(range(top_k))
+                ax4.set_yticklabels(top_labels_list)
+                ax4.set_xlabel('Similarity Score')
+                ax4.set_title(f'Stage 2: Top-{top_k} Predictions\nPred: {pred_label} ({pred_score:.3f}) | True: {true_label} ({true_score:.3f})')
+                ax4.grid(axis='x', alpha=0.3)
+                # Add score labels on bars
+                for j, (bar, score) in enumerate(zip(bars, top_scores)):
+                    ax4.text(score + 0.01, j, f'{score:.3f}', va='center', fontsize=8)
+                
+                # Row 2: Stage 2 - All similarities (sorted)
+                ax5 = fig.add_subplot(gs[1, :2])
+                sorted_indices = np.argsort(similarities)[::-1]
+                sorted_scores = similarities[sorted_indices]
+                sorted_labels_short = [labels[idx][:10] if labels else f"C{idx}" for idx in sorted_indices[:20]]  # Show top 20
+                colors_all = ['green' if idx == true_idx else 'red' if idx == pred_idx else 'lightblue' 
+                             for idx in sorted_indices[:20]]
+                ax5.bar(range(len(sorted_labels_short)), sorted_scores[:20], color=colors_all)
+                ax5.set_xticks(range(len(sorted_labels_short)))
+                ax5.set_xticklabels(sorted_labels_short, rotation=45, ha='right', fontsize=8)
+                ax5.set_ylabel('Similarity Score')
+                ax5.set_title(f'Stage 2: All Class Similarities (Top 20)\n{"✓ Correct" if pred_idx == true_idx else "✗ Wrong"}')
+                ax5.grid(axis='y', alpha=0.3)
+                
+                # Row 2: Stage 2 - Similarity distribution
+                ax6 = fig.add_subplot(gs[1, 2:])
+                ax6.hist(similarities, bins=30, edgecolor='black', alpha=0.7)
+                ax6.axvline(true_score, color='green', linestyle='--', linewidth=2, label=f'True ({true_score:.3f})')
+                ax6.axvline(pred_score, color='red', linestyle='--', linewidth=2, label=f'Pred ({pred_score:.3f})')
+                ax6.set_xlabel('Similarity Score')
+                ax6.set_ylabel('Frequency')
+                ax6.set_title('Stage 2: Similarity Score Distribution')
+                ax6.legend()
+                ax6.grid(alpha=0.3)
                 
                 plt.tight_layout()
                 save_path = output_dir / f'sample_{samples_visualized:03d}_pipeline.png'
@@ -198,7 +262,7 @@ def main():
     
     # Visualize samples
     print(f"\nVisualizing {args.num_samples} samples...")
-    visualize_samples(model, test_loader, device, args.num_samples, args.vis_dir)
+    visualize_samples(model, test_loader, device, args.num_samples, args.vis_dir, labels)
     
     print(f"\nTest complete! Visualizations saved to {args.vis_dir}")
 
