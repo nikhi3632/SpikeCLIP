@@ -23,8 +23,8 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.5  # Increased from 0.1 for stronger semantic guidance
-    semantic_weight: 0.3  # Semantic alignment loss - ensures reconstructed images match text labels
+    perceptual_weight: 0.7  # Increased from 0.5 to encourage more semantic learning beyond copying
+    semantic_weight: 0.5  # Increased from 0.3 to ensure reconstructed images match text labels semantically
   
   # Training parameters
   training:
@@ -67,13 +67,13 @@ prompt:
   # Loss parameters
   loss:
     type: "clip"
-    temperature: 0.07  # Increased from 0.05 for better learning dynamics
+    temperature: 0.15  # Increased from 0.07 to 0.15 for smoother loss landscape and better learning
   
   # Training parameters
   training:
-    epochs: 50  # Increased from 25 for better convergence
+    epochs: 100  # Increased from 50 to allow more time for learning discriminative features
     batch_size: 8
-    learning_rate: 0.001  # Increased from 0.0005 for faster learning
+    learning_rate: 0.0005  # Reduced from 0.001 for more stable training
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -83,7 +83,7 @@ prompt:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.001  # Can override training.learning_rate (increased from 0.0005)
+    lr: 0.0005  # Can override training.learning_rate (reduced from 0.001 for stability)
     weight_decay: 0.0001  # Reduced from 0.01 to allow better learning
     momentum: 0.9  # Only for SGD
   
@@ -110,8 +110,8 @@ refine:
   # Loss parameters - RefinementLoss (encourages improvement without matching target)
   loss:
     type: "refinement"  # Use RefinementLoss instead of reconstruction
-    identity_penalty: 10.0  # Increased from 5.0 to strongly prevent identity mapping/copying
-    perceptual_weight: 2.0  # Increased from 1.0 for stronger CLIP perceptual guidance
+    identity_penalty: 20.0  # Increased from 10.0 with continuous exponential penalty
+    perceptual_weight: 5.0  # Increased from 2.0 for stronger CLIP perceptual guidance
     tv_weight: 0.1  # Total variation loss for smoothness
   
   # Training parameters

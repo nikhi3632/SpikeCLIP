@@ -33,15 +33,18 @@ class RefinementLoss(nn.Module):
         refined: [B, C, H, W] refined image
         coarse: [B, C, H, W] coarse image
         """
-        # Small structure loss to maintain basic structure (not exact match)
-        structure_loss = F.l1_loss(refined, coarse) * 0.1
+        # Very small structure loss to maintain basic structure (not exact match)
+        # Reduced weight to discourage copying
+        structure_loss = F.l1_loss(refined, coarse) * 0.01
         
-        # Large identity penalty to prevent copying
+        # Continuous identity penalty to prevent copying
         l1_diff = F.l1_loss(refined, coarse)
-        # Penalty is high when images are very similar (identity mapping)
-        # Use a stronger penalty that activates when l1_diff < threshold
-        # Threshold-based penalty: high penalty when too similar, zero when different enough
-        identity_penalty = self.identity_penalty * torch.clamp(0.02 - l1_diff, min=0.0) / 0.02
+        # Use exponential penalty that penalizes ANY similarity, not just when < threshold
+        # This ensures the model cannot avoid the penalty by keeping L1_diff just above threshold
+        # Penalty decreases exponentially as images become more different
+        # When l1_diff = 0 (identical): penalty = identity_penalty
+        # When l1_diff = 0.1 (very different): penalty ≈ 0
+        identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
         
         # Total variation loss for smoothness (encourages natural images)
         tv_loss = self.total_variation_loss(refined) * self.tv_weight
