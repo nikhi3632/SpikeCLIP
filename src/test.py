@@ -58,6 +58,11 @@ def visualize_samples(
             # Forward pass
             refined_images, clip_features, coarse_images = model(spikes, label_indices)
             
+            # Generate HQ images for Stage 2 visualization (according to paper)
+            # According to paper: HQ images from generation pipeline (mixture for real data)
+            from utils.hq_generation import generate_hq_images
+            hq_images = generate_hq_images(spikes, method="mixture")  # [B, 3, H, W]
+            
             # Get all text embeddings for Stage 2 visualization
             all_label_indices = torch.arange(model.prompt_model.num_classes, device=device)
             all_text_features = model.prompt_model.get_text_embeddings(all_label_indices)
@@ -65,25 +70,27 @@ def visualize_samples(
             # Visualize each sample in batch
             for i in range(min(spikes.size(0), num_samples - samples_visualized)):
                 # Get images
+                # Input: Spike temporal average (for visualization)
                 spike_avg = spikes[i].mean(dim=0).cpu().numpy()  # [H, W]
                 spike_avg_normalized = (spike_avg - spike_avg.min()) / (spike_avg.max() - spike_avg.min() + 1e-8)
                 
-                # Create training target (spike mean + variance, normalized) for comparison
-                spike_mean = spikes[i].mean(dim=0).cpu().numpy()  # [H, W]
-                spike_var = spikes[i].var(dim=0).cpu().numpy()  # [H, W]
-                spike_combined = spike_mean + 0.3 * spike_var  # [H, W]
-                spike_combined_min = spike_combined.min()
-                spike_combined_max = spike_combined.max()
-                spike_combined_norm = (spike_combined - spike_combined_min) / (spike_combined_max - spike_combined_min + 1e-8)
-                spike_target = np.stack([spike_combined_norm] * 3, axis=-1)  # [H, W, 3] - training target
+                # Get HQ image for this sample (for Stage 2 visualization)
+                hq_img_sample = hq_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
+                
+                # Create training target (TFI) according to the paper
+                # According to paper: Stage 1 uses TFI (Texture from ISI) as target
+                from utils.tfi import calculate_tfi_vectorized
+                tfi = calculate_tfi_vectorized(spikes[i:i+1], threshold=1.0)  # [1, 1, H, W]
+                tfi_np = tfi.squeeze().cpu().numpy()  # [H, W]
+                spike_target = np.stack([tfi_np] * 3, axis=-1)  # [H, W, 3] - TFI target
                 
                 coarse_img = coarse_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
                 refined_img = refined_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
                 
-                # Compute Stage 1 reconstruction metrics (coarse vs training target)
+                # Compute Stage 1 reconstruction metrics (coarse vs TFI target)
+                # According to paper: Stage 1 is trained to map spikes to TFI result
                 coarse_tensor = coarse_images[i:i+1]  # [1, 3, H, W]
-                target_tensor = torch.from_numpy(spike_target).permute(2, 0, 1).unsqueeze(0).float()  # [1, 3, H, W]
-                target_tensor = target_tensor.to(coarse_tensor.device)
+                target_tensor = tfi.repeat(1, 3, 1, 1).to(coarse_tensor.device)  # [1, 3, H, W] - TFI target
                 
                 stage1_psnr = compute_psnr(coarse_tensor, target_tensor)
                 stage1_ssim = compute_ssim(coarse_tensor, target_tensor)
@@ -129,10 +136,10 @@ def visualize_samples(
                 ax1.set_title(f'Input: Spike Average\nTrue: {true_label}')
                 ax1.axis('off')
                 
-                # Training target (spike mean + variance)
+                # Training target (TFI) according to the paper
                 ax1b = fig.add_subplot(gs[0, 1])
                 ax1b.imshow(np.clip(spike_target, 0, 1))
-                ax1b.set_title('Training Target\n(Mean + 0.3×Var)')
+                ax1b.set_title('Training Target (TFI)\n(Texture from ISI)')
                 ax1b.axis('off')
                 
                 # Stage 1: Coarse Reconstruction
@@ -160,8 +167,14 @@ def visualize_samples(
                 ax3e.set_title('Stage 3 Error Map\n(Refined vs Coarse)')
                 ax3e.axis('off')
                 
+                # Stage 2: HQ image (for reference)
+                ax_hq = fig.add_subplot(gs[1, 1])
+                ax_hq.imshow(np.clip(hq_img_sample, 0, 1))
+                ax_hq.set_title('Stage 2: HQ Image\n(Mixture: TFI+WGSE+Count)')
+                ax_hq.axis('off')
+                
                 # Stage 2: Top-k predictions
-                ax4 = fig.add_subplot(gs[1, 1])
+                ax4 = fig.add_subplot(gs[1, 2])
                 colors = ['green' if idx == true_idx else 'red' if idx == pred_idx else 'gray' 
                          for idx in top_indices]
                 bars = ax4.barh(range(top_k), top_scores, color=colors)
@@ -175,7 +188,7 @@ def visualize_samples(
                     ax4.text(score + 0.01, j, f'{score:.3f}', va='center', fontsize=8)
                 
                 # Row 2: Stage 2 - All similarities (sorted)
-                ax5 = fig.add_subplot(gs[1, 2:4])
+                ax5 = fig.add_subplot(gs[1, 3:5])
                 sorted_indices = np.argsort(similarities)[::-1]
                 sorted_scores = similarities[sorted_indices]
                 sorted_labels_short = [labels[idx][:10] if labels else f"C{idx}" for idx in sorted_indices[:20]]  # Show top 20
@@ -188,24 +201,13 @@ def visualize_samples(
                 ax5.set_title(f'Stage 2: All Class Similarities (Top 20)\n{"✓ Correct" if pred_idx == true_idx else "✗ Wrong"}')
                 ax5.grid(axis='y', alpha=0.3)
                 
-                # Row 2: Stage 2 - Similarity distribution
-                ax6 = fig.add_subplot(gs[1, 4])
-                ax6.hist(similarities, bins=30, edgecolor='black', alpha=0.7)
-                ax6.axvline(true_score, color='green', linestyle='--', linewidth=2, label=f'True ({true_score:.3f})')
-                ax6.axvline(pred_score, color='red', linestyle='--', linewidth=2, label=f'Pred ({pred_score:.3f})')
-                ax6.set_xlabel('Similarity Score')
-                ax6.set_ylabel('Frequency')
-                ax6.set_title('Stage 2: Similarity Distribution')
-                ax6.legend()
-                ax6.grid(alpha=0.3)
-                
                 # Row 3: Side-by-side comparisons for better assessment
-                # Comparison: Target vs Coarse (Stage 1 quality)
+                # Comparison: TFI Target vs Coarse (Stage 1 quality)
                 ax7 = fig.add_subplot(gs[2, 0])
                 comparison_stage1 = np.hstack([np.clip(spike_target, 0, 1), np.clip(coarse_img, 0, 1)])
                 ax7.imshow(comparison_stage1)
                 ax7.axvline(spike_target.shape[1], color='yellow', linewidth=2)
-                ax7.set_title('Stage 1: Target (L) vs Coarse (R)')
+                ax7.set_title('Stage 1: TFI Target (L) vs Coarse (R)')
                 ax7.axis('off')
                 
                 # Comparison: Coarse vs Refined (Stage 3 quality)
@@ -216,16 +218,28 @@ def visualize_samples(
                 ax8.set_title('Stage 3: Coarse (L) vs Refined (R)')
                 ax8.axis('off')
                 
+                # Stage 2: Similarity distribution
+                ax6 = fig.add_subplot(gs[2, 2])
+                ax6.hist(similarities, bins=30, edgecolor='black', alpha=0.7)
+                ax6.axvline(true_score, color='green', linestyle='--', linewidth=2, label=f'True ({true_score:.3f})')
+                ax6.axvline(pred_score, color='red', linestyle='--', linewidth=2, label=f'Pred ({pred_score:.3f})')
+                ax6.set_xlabel('Similarity Score')
+                ax6.set_ylabel('Frequency')
+                ax6.set_title('Stage 2: Similarity Distribution')
+                ax6.legend()
+                ax6.grid(alpha=0.3)
+                
                 # Metrics summary
-                ax9 = fig.add_subplot(gs[2, 2:])
+                ax9 = fig.add_subplot(gs[2, 3:])
                 ax9.axis('off')
                 metrics_text = f"""
 Reconstruction Quality Metrics:
 
-Stage 1 (Coarse vs Training Target):
+Stage 1 (Coarse vs TFI Target):
   PSNR: {stage1_psnr:.2f} dB (higher is better, >20 is good)
   SSIM: {stage1_ssim:.3f} (higher is better, >0.7 is good)
   L1 Error: {stage1_l1:.4f} (lower is better, <0.1 is good)
+  Note: According to paper, Stage 1 maps spikes to TFI result
 
 Stage 3 (Refined vs Coarse):
   PSNR: {stage3_psnr:.2f} dB (should be <inf if refining)
@@ -252,7 +266,8 @@ Stage 2 Classification:
                     f.write(f"Predicted Label: {pred_label} {'(CORRECT)' if pred_idx == true_idx else '(WRONG)'}\n")
                     f.write(f"Prediction Score: {pred_score:.4f}\n")
                     f.write(f"True Label Score: {true_score:.4f}\n")
-                    f.write(f"\nStage 1 Reconstruction (Coarse vs Training Target):\n")
+                    f.write(f"\nStage 1 Reconstruction (Coarse vs TFI Target):\n")
+                    f.write(f"  Note: According to paper, Stage 1 maps spikes to TFI result\n")
                     f.write(f"  PSNR: {stage1_psnr:.4f} dB (higher is better, >20 is good)\n")
                     f.write(f"  SSIM: {stage1_ssim:.4f} (higher is better, >0.7 is good)\n")
                     f.write(f"  L1 Error: {stage1_l1:.4f} (lower is better, <0.1 is good)\n")
@@ -369,7 +384,8 @@ def main():
     print(f"\n===== TEST RESULTS =====")
     print(f"Reconstruction Metrics (Refined vs Coarse):")
     print(f"  PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}")
-    print(f"  Note: Metrics compare refined images to coarse images (refinement quality)")
+    print(f"  Note: According to paper, Stage 3 refines coarse images.")
+    print(f"        Metrics compare refined images to coarse images (refinement quality).")
     print(f"Classification - Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     
     # Save test metrics to log file

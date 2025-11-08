@@ -82,8 +82,10 @@ def main():
             total_predictions += predictions.size(0)
             
             # Reconstruction metrics
-            # For unpaired training: compare refined vs coarse (improvement metric)
-            # Also compute spike-to-image reconstruction quality
+            # According to paper:
+            # - Stage 1: Maps spikes to TFI result (evaluated separately)
+            # - Stage 3: Refines coarse images (compare refined vs coarse)
+            # For unpaired training: compare refined vs coarse (refinement quality)
             target = coarse_images
             for i in range(spikes.size(0)):
                 pred_img = refined_images[i:i+1]
@@ -132,8 +134,8 @@ def main():
     print(f"  SSIM: {avg_ssim:.4f} (higher is better)")
     print(f"  L1 Error: {avg_l1:.4f} (lower is better)")
     print(f"  L2 Error: {avg_l2:.4f} (lower is better)")
-    print(f"  Note: Metrics compare refined images to coarse images.")
-    print(f"        For unpaired training, these show refinement quality.")
+    print(f"  Note: According to paper, Stage 3 refines coarse images.")
+    print(f"        Metrics compare refined images to coarse images (refinement quality).")
     print(f"\nClassification Metrics:")
     print(f"  Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     print(f"\nEvaluation Time: {eval_time:.2f}s")
