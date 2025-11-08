@@ -95,6 +95,16 @@ class PromptTrainer(Trainer):
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                 self.optimizer.step()
             
+            # Track classification accuracy (for monitoring)
+            with torch.no_grad():
+                hq_sim = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)
+                lq_sim = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)
+                logits = torch.stack([lq_sim, hq_sim], dim=1)
+                preds = logits.argmax(dim=1)
+                batch_acc = (preds == labels).float().mean().item()
+                if batch_idx == 0:  # Log first batch accuracy occasionally
+                    pbar.set_postfix({'loss': f'{loss.item():.4f}', 'acc': f'{batch_acc:.3f}'})
+            
             # Track latency
             if self.track_gpu_metrics:
                 torch.cuda.synchronize()
@@ -128,6 +138,8 @@ class PromptTrainer(Trainer):
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        correct_predictions = 0
+        total_predictions = 0
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
@@ -158,10 +170,28 @@ class PromptTrainer(Trainer):
                     image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
                     loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 
+                # Compute classification accuracy
+                hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
+                lq_similarity = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
+                logits = torch.stack([lq_similarity, hq_similarity], dim=1)  # [2*B, 2]
+                predictions = logits.argmax(dim=1)  # [2*B]
+                correct_predictions += (predictions == labels).sum().item()
+                total_predictions += labels.size(0)
+                
                 total_loss += loss.item()
                 num_batches += 1
         
-        return total_loss / num_batches
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
+        
+        # Log accuracy if available
+        if hasattr(self, 'log_dir') and self.log_dir:
+            import os
+            log_file = os.path.join(self.log_dir, 'prompt_train_log.txt')
+            with open(log_file, 'a') as f:
+                f.write(f"Epoch {self.current_epoch}: Val Loss: {avg_loss:.4f}, Val Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})\n")
+        
+        return avg_loss
 
 def main():
     parser = argparse.ArgumentParser(description='Train Stage 2: Prompt Learning')
