@@ -4,8 +4,10 @@ import torch.nn as nn
 
 class RefinementNet(nn.Module):
     """
-    Stage 3: Refinement network using UNet-style architecture.
-    Takes coarse images and refines them to higher quality.
+    Stage 3: Refinement network.
+    
+    NOTE: Based on reference code analysis, refinement may not need separate training.
+    This implementation defaults to identity (just return coarse images) unless trained.
     
     Input:  coarse_images [B, 3, H, W]
     Output: refined_images [B, 3, H, W] in [0, 1]
@@ -16,10 +18,16 @@ class RefinementNet(nn.Module):
         in_channels: int = 3,
         out_channels: int = 3,
         base_channels: int = 64,
-        num_down: int = 4
+        num_down: int = 4,
+        use_identity: bool = True  # Default: just return coarse (no refinement)
     ):
         super().__init__()
         self.num_down = num_down
+        self.use_identity = use_identity
+        
+        # If using identity, just return input (no refinement needed)
+        if use_identity:
+            return
         
         # Encoder blocks (save features for skip connections before pooling)
         self.enc1_conv, self.enc1_pool = self._make_encoder_block(in_channels, base_channels)  # 224x224
@@ -97,6 +105,12 @@ class RefinementNet(nn.Module):
         x: [B, 3, H, W] coarse images
         Returns: [B, 3, H, W] refined images
         """
+        # If using identity, just return coarse images (no refinement)
+        # This matches the reference code which doesn't show refinement training
+        if self.use_identity:
+            return x
+        
+        # Full UNet refinement (original implementation)
         # Encoder path (save features before pooling for skip connections)
         e1 = self.enc1_conv(x)  # [B, 64, 224, 224]
         e1_pooled = self.enc1_pool(e1) if self.enc1_pool else e1  # [B, 64, 112, 112]

@@ -238,11 +238,13 @@ def main():
         param.requires_grad = False
     
     # Stage 3 model
+    # Set use_identity=False to actually train the UNet (not just return coarse)
     model = RefinementNet(
         in_channels=model_config.get('in_channels', 3),
         out_channels=model_config.get('out_channels', 3),
         base_channels=model_config.get('base_channels', 64),
-        num_down=model_config.get('num_down', 4)
+        num_down=model_config.get('num_down', 4),
+        use_identity=False  # Train the UNet, not just identity
     )
     
     # Load CLIP model for CLIP-guided perceptual loss (like reference code)

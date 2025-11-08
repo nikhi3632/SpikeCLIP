@@ -42,11 +42,26 @@ def load_checkpoint(
     checkpoint_path: str,
     model: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
-    device: Optional[torch.device] = None
+    device: Optional[torch.device] = None,
+    strict: bool = True
 ) -> Dict[str, Any]:
-    """Load model checkpoint."""
+    """Load model checkpoint.
+    
+    Args:
+        strict: If False, allows missing keys (useful for loading old checkpoints with new model structure)
+    """
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    
+    # Load state dict with optional strict mode
+    if strict:
+        model.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        # Load with strict=False to handle missing keys (e.g., text_encoder added later)
+        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        if missing_keys:
+            print(f"Warning: Missing keys in checkpoint (will use default initialization): {missing_keys[:5]}...")
+        if unexpected_keys:
+            print(f"Warning: Unexpected keys in checkpoint (ignored): {unexpected_keys[:5]}...")
     
     if optimizer is not None and 'optimizer_state_dict' in checkpoint:
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -58,15 +73,17 @@ def load_best_checkpoint(
     model: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     device: Optional[torch.device] = None,
-    prefix: Optional[str] = None
+    prefix: Optional[str] = None,
+    strict: bool = True
 ) -> Dict[str, Any]:
     """Load best checkpoint from directory.
     
     Args:
         prefix: Optional prefix for checkpoint filename (e.g., 'coarse' -> 'coarse_best.pth')
+        strict: If False, allows missing keys (useful for loading old checkpoints)
     """
     best_name = f'{prefix}_best.pth' if prefix else 'best.pth'
     checkpoint_path = Path(checkpoint_dir) / best_name
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Best checkpoint not found: {checkpoint_path}")
-    return load_checkpoint(str(checkpoint_path), model, optimizer, device)
+    return load_checkpoint(str(checkpoint_path), model, optimizer, device, strict=strict)

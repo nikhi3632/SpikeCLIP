@@ -68,11 +68,13 @@ def combine_checkpoints(
         class_labels=labels  # Pass labels for better initialization
     )
     print(f"Loading prompt model from {checkpoint_dir / 'prompt_best.pth'}")
+    # Use strict=False to handle missing text_encoder keys (added after checkpoint was saved)
     load_best_checkpoint(
         str(checkpoint_dir),
         prompt_model,
         device=device,
-        prefix='prompt'
+        prefix='prompt',
+        strict=False  # Allow missing keys (text_encoder will use default initialization from CLIP)
     )
     
     # Load Stage 3: Refine
