@@ -34,6 +34,8 @@ coarse:
     seed: 42
     use_amp: false
     grad_clip: 1.0
+    early_stopping_patience: 5  # Stop if no improvement for 5 epochs
+    early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
@@ -65,22 +67,24 @@ prompt:
   # Loss parameters
   loss:
     type: "clip"
-    temperature: 0.05  # Lower temperature = sharper alignment (was 0.07)
+    temperature: 0.07  # Increased from 0.05 for better learning dynamics
   
   # Training parameters
   training:
-    epochs: 25  # Increased from 10 for better convergence
+    epochs: 50  # Increased from 25 for better convergence
     batch_size: 8
-    learning_rate: 0.0005  # Increased from 0.0001 for faster learning
+    learning_rate: 0.001  # Increased from 0.0005 for faster learning
     seed: 42
     use_amp: false
     grad_clip: 1.0
+    early_stopping_patience: 5  # Stop if no improvement for 5 epochs
+    early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.0005  # Can override training.learning_rate
-    weight_decay: 0.01
+    lr: 0.001  # Can override training.learning_rate (increased from 0.0005)
+    weight_decay: 0.0001  # Reduced from 0.01 to allow better learning
     momentum: 0.9  # Only for SGD
   
   # Scheduler configuration
@@ -106,23 +110,25 @@ refine:
   # Loss parameters - RefinementLoss (encourages improvement without matching target)
   loss:
     type: "refinement"  # Use RefinementLoss instead of reconstruction
-    identity_penalty: 5.0  # Large penalty to prevent identity mapping/copying
-    perceptual_weight: 1.0  # CLIP perceptual loss to encourage better features
+    identity_penalty: 10.0  # Increased from 5.0 to strongly prevent identity mapping/copying
+    perceptual_weight: 2.0  # Increased from 1.0 for stronger CLIP perceptual guidance
     tv_weight: 0.1  # Total variation loss for smoothness
   
   # Training parameters
   training:
-    epochs: 20  # Increased from 10 to allow more learning
+    epochs: 30  # Increased from 20 to allow more learning
     batch_size: 8
-    learning_rate: 0.0005  # Increased from 0.0001 to escape local minima faster
+    learning_rate: 0.001  # Increased from 0.0005 for faster learning
     seed: 42
     use_amp: false
     grad_clip: 1.0
+    early_stopping_patience: 5  # Stop if no improvement for 5 epochs
+    early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.0005  # Can override training.learning_rate
+    lr: 0.001  # Can override training.learning_rate (increased from 0.0005)
     weight_decay: 0.0001
     momentum: 0.9  # Only for SGD
   

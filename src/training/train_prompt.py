@@ -265,6 +265,8 @@ def main():
     
     # Trainer
     checkpoint_dir = Path(output_dir)
+    early_stopping_patience = training_config.get('early_stopping_patience', None)
+    early_stopping_min_delta = training_config.get('early_stopping_min_delta', 0.0)
     trainer = PromptTrainer(
         model=model,
         train_loader=train_loader,
@@ -276,7 +278,9 @@ def main():
         use_amp=use_amp,
         grad_clip=grad_clip,
         checkpoint_prefix='prompt',
-        log_dir=log_dir
+        log_dir=log_dir,
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_min_delta=early_stopping_min_delta
     )
     trainer.coarse_model = coarse_model.to(device)
     

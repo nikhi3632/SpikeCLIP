@@ -39,8 +39,9 @@ class RefinementLoss(nn.Module):
         # Large identity penalty to prevent copying
         l1_diff = F.l1_loss(refined, coarse)
         # Penalty is high when images are very similar (identity mapping)
-        # Use a penalty that's high when l1_diff < threshold
-        identity_penalty = self.identity_penalty * torch.clamp(0.01 - l1_diff, min=0.0) / 0.01
+        # Use a stronger penalty that activates when l1_diff < threshold
+        # Threshold-based penalty: high penalty when too similar, zero when different enough
+        identity_penalty = self.identity_penalty * torch.clamp(0.02 - l1_diff, min=0.0) / 0.02
         
         # Total variation loss for smoothness (encourages natural images)
         tv_loss = self.total_variation_loss(refined) * self.tv_weight
@@ -66,11 +67,19 @@ class RefinementLoss(nn.Module):
             refined_features = F.normalize(refined_features, dim=-1)
             coarse_features = F.normalize(coarse_features, dim=-1)
             
-            # Perceptual loss: encourage refined to have better features (not match, but improve)
-            # Use cosine similarity - we want refined to be similar but better
-            # Actually, use a loss that encourages refined features to be "sharper" or "better"
-            # For now, use MSE but with a small weight to encourage improvement
-            perceptual_loss = F.mse_loss(refined_features, coarse_features) * self.perceptual_weight * 0.1
+            # Perceptual loss: encourage refined to have better features
+            # Use a loss that encourages refinement: we want refined features to be "better"
+            # One approach: encourage refined features to have higher magnitude (more confident)
+            # Another: use cosine similarity but with a margin (refined should be more similar to ideal)
+            # For now, use MSE with a weight to encourage improvement
+            # But also add a term that encourages refined to be "sharper" (higher feature magnitude)
+            feature_mse = F.mse_loss(refined_features, coarse_features)
+            # Encourage refined features to have higher magnitude (more confident features)
+            refined_magnitude = refined_features.norm(dim=-1).mean()
+            coarse_magnitude = coarse_features.norm(dim=-1).mean()
+            magnitude_boost = torch.clamp(coarse_magnitude - refined_magnitude, min=0.0)  # Penalize if refined is weaker
+            
+            perceptual_loss = (feature_mse * 0.1 + magnitude_boost * 0.1) * self.perceptual_weight
         
         # Total loss: structure (maintain) + identity penalty (prevent copy) + TV (smooth) + perceptual (improve)
         total_loss = structure_loss + identity_penalty + tv_loss + perceptual_loss

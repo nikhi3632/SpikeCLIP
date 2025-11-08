@@ -27,7 +27,9 @@ class Trainer:
         grad_clip: Optional[float] = None,
         log_interval: int = 10,
         checkpoint_prefix: Optional[str] = None,
-        log_dir: Optional[str] = None
+        log_dir: Optional[str] = None,
+        early_stopping_patience: Optional[int] = None,
+        early_stopping_min_delta: float = 0.0
     ):
         self.model = model.to(device)
         self.train_loader = train_loader
@@ -48,6 +50,12 @@ class Trainer:
         self.current_epoch = 0
         self.log_dir = log_dir or str(Path(checkpoint_dir).parent / 'logs')
         self.stage = checkpoint_prefix or 'coarse'
+        
+        # Early stopping
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_min_delta = early_stopping_min_delta
+        self.early_stopping_counter = 0
+        self.early_stopping_enabled = early_stopping_patience is not None and early_stopping_patience > 0
         
         # GPU metrics tracking
         self.track_gpu_metrics = device.type == 'cuda'
@@ -241,9 +249,15 @@ class Trainer:
                 current_lr = self.optimizer.param_groups[0]['lr']
             
             # Check for best model based on validation loss
-            is_best = val_loss < self.best_loss
+            # Improvement is when val_loss is lower than best_loss by at least min_delta
+            improvement = (self.best_loss - val_loss) >= self.early_stopping_min_delta
+            is_best = improvement
+            
             if is_best:
                 self.best_loss = val_loss
+                self.early_stopping_counter = 0  # Reset counter on improvement
+            elif self.early_stopping_enabled:
+                self.early_stopping_counter += 1
             
             # Prepare metadata with GPU metrics
             metadata = {
@@ -275,11 +289,19 @@ class Trainer:
             
             # Print metrics
             metrics_str = f"Epoch {epoch}: Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Best Val Loss: {self.best_loss:.4f}"
+            if self.early_stopping_enabled:
+                metrics_str += f", Patience: {self.early_stopping_counter}/{self.early_stopping_patience}"
             if train_gpu_metrics:
                 metrics_str += f"\n  GPU Metrics - Latency: {train_gpu_metrics['avg_latency']:.4f}s±{train_gpu_metrics['std_latency']:.4f}s, "
                 metrics_str += f"Throughput: {train_gpu_metrics['throughput']:.2f} samples/s, "
                 metrics_str += f"Memory: {train_gpu_metrics['memory_usage_mb']:.2f} MB"
             print(metrics_str)
+            
+            # Early stopping check
+            if self.early_stopping_enabled and self.early_stopping_counter >= self.early_stopping_patience:
+                print(f"\nEarly stopping triggered! No improvement for {self.early_stopping_patience} epochs.")
+                print(f"Best validation loss: {self.best_loss:.4f} at epoch {epoch - self.early_stopping_patience}")
+                break
         
         # Save final model at the end
         print(f"Training complete. Best validation loss: {self.best_loss:.4f}")
