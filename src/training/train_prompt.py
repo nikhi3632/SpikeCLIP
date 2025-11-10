@@ -43,6 +43,7 @@ class PromptTrainer(Trainer):
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}")
         for batch_idx, batch in enumerate(pbar):
             spikes = batch[0].to(self.device)  # [B, T, H, W]
+            label_indices = batch[2].to(self.device)  # [B] class labels for multi-class training
             batch_size = spikes.size(0)
             
             # Track latency
@@ -78,7 +79,22 @@ class PromptTrainer(Trainer):
             if self.use_amp:
                 with torch.amp.autocast('cuda'):
                     image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
-                    loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                    # Binary HQ/LQ loss
+                    binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                    
+                    # Multi-class classification loss (if enabled)
+                    # Use only HQ images for multi-class training (better quality)
+                    hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                    if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                        # Get CLIP text features for multi-class classification
+                        if hasattr(self, 'text_features') and self.text_features is not None:
+                            class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
+                            # Combined loss: binary + multi-class
+                            loss = binary_loss + self.multi_class_weight * class_loss
+                        else:
+                            loss = binary_loss
+                    else:
+                        loss = binary_loss
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -88,7 +104,22 @@ class PromptTrainer(Trainer):
                 self.scaler.update()
             else:
                 image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
-                loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                # Binary HQ/LQ loss
+                binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                
+                # Multi-class classification loss (if enabled)
+                # Use only HQ images for multi-class training (better quality)
+                hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                    # Get CLIP text features for multi-class classification
+                    if hasattr(self, 'text_features') and self.text_features is not None:
+                        class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
+                        # Combined loss: binary + multi-class
+                        loss = binary_loss + self.multi_class_weight * class_loss
+                    else:
+                        loss = binary_loss
+                else:
+                    loss = binary_loss
                 
                 loss.backward()
                 if self.grad_clip:
@@ -103,7 +134,7 @@ class PromptTrainer(Trainer):
                 preds = logits.argmax(dim=1)
                 batch_acc = (preds == labels).float().mean().item()
                 if batch_idx == 0:  # Log first batch accuracy occasionally
-                    pbar.set_postfix({'loss': f'{loss.item():.4f}', 'acc': f'{batch_acc:.3f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.6f}', 'acc': f'{batch_acc:.3f}'})
             
             # Track latency
             if self.track_gpu_metrics:
@@ -144,6 +175,7 @@ class PromptTrainer(Trainer):
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
                 spikes = batch[0].to(self.device)
+                label_indices = batch[2].to(self.device)  # [B] class labels for multi-class training
                 batch_size = spikes.size(0)
                 
                 # Stage 1: Get coarse images (LQ images)
@@ -165,10 +197,34 @@ class PromptTrainer(Trainer):
                 if self.use_amp:
                     with torch.amp.autocast('cuda'):
                         image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
-                        loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                        # Binary HQ/LQ loss
+                        binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                        
+                        # Multi-class classification loss (if enabled)
+                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                        if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                            if hasattr(self, 'text_features') and self.text_features is not None:
+                                class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
+                                loss = binary_loss + self.multi_class_weight * class_loss
+                            else:
+                                loss = binary_loss
+                        else:
+                            loss = binary_loss
                 else:
                     image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
-                    loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                    # Binary HQ/LQ loss
+                    binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
+                    
+                    # Multi-class classification loss (if enabled)
+                    hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                    if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                        if hasattr(self, 'text_features') and self.text_features is not None:
+                            class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
+                            loss = binary_loss + self.multi_class_weight * class_loss
+                        else:
+                            loss = binary_loss
+                    else:
+                        loss = binary_loss
                 
                 # Compute classification accuracy
                 hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
@@ -308,6 +364,40 @@ def main():
         temperature=loss_config.get('temperature', 0.07)
     )
     
+    # Optional: Multi-class classification loss for Stage 2
+    # This helps Stage 2 learn better features for multi-class classification
+    multi_class_weight = loss_config.get('multi_class_weight', 0.0)  # 0.0 = disabled by default
+    class_criterion = None
+    text_features = None
+    
+    if multi_class_weight > 0:
+        import clip
+        import torch.nn.functional as F
+        
+        print("Enabling multi-class training for Stage 2...")
+        # Load CLIP model for text features
+        clip_model, _ = clip.load(model_config.get('clip_model_name', 'ViT-B/32'), device=device)
+        clip_model = clip_model.float()
+        clip_model.eval()
+        for param in clip_model.parameters():
+            param.requires_grad = False
+        
+        # Pre-compute CLIP text features for all classes
+        with torch.no_grad():
+            text_prompts = [f"a photo of a {label}" for label in labels]
+            text_tokens = clip.tokenize(text_prompts).to(device)
+            text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+            text_features = F.normalize(text_features, dim=-1)
+        
+        # InfoNCE loss for multi-class classification
+        class_criterion = get_loss_fn(
+            'info_nce',
+            temperature=loss_config.get('temperature', 0.07)
+        )
+        
+        print(f"Multi-class weight: {multi_class_weight}")
+        print(f"Text features shape: {text_features.shape}")
+    
     # Optimizer
     optimizer_cfg = optimizer_config.copy()
     optimizer_cfg['lr'] = learning_rate
@@ -338,6 +428,10 @@ def main():
     trainer.coarse_model = coarse_model.to(device)
     # Set HQ generation method from config
     trainer.hq_generation_method = model_config.get('hq_generation_method', 'mixture')
+    # Set multi-class training components (if enabled)
+    trainer.class_criterion = class_criterion
+    trainer.text_features = text_features.to(device) if text_features is not None else None
+    trainer.multi_class_weight = multi_class_weight
     
     # Resume if specified
     if args.resume:

@@ -68,6 +68,7 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
+    multi_class_weight: 0.5  # Weight for multi-class classification loss (0.0 = disabled, >0 = enabled)
   
   # Training parameters
   training:
@@ -77,8 +78,8 @@ prompt:
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 10  # Stop if no improvement for 10 epochs (increased from 5)
-    early_stopping_min_delta: 0.00001  # Minimum improvement to reset patience (reduced from 0.0001 for low loss scale)
+    early_stopping_patience: 10  # Stop if no improvement for 10 epochs (increased from 5 to allow multi-class learning)
+    early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience (reduced from 0.00001 for very low loss scale with multi-class)
   
   # Optimizer configuration
   optimizer:
@@ -111,15 +112,15 @@ refine:
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 0.5  # λ=0.5 (reduced from 1.0 to emphasize class discrimination)
-    class_loss_weight: 5.0  # α=5.0 (increased from 2.0 to strongly emphasize classification accuracy)
-    identity_penalty: 5.0  # Penalty for identity mapping (refined == coarse)
+    prompt_weight: 0.5  # λ=0.5 (reduced to emphasize classification)
+    class_loss_weight: 3.0  # α=3.0 (increased to emphasize classification accuracy)
+    identity_penalty: 2.0  # Penalty for identity mapping (reduced from 5.0 - was too strong)
   
   # Training parameters
   training:
     epochs: 50  # Increased from 30 to allow more learning for better refinement
     batch_size: 8
-    learning_rate: 0.001  # Increased from 0.0005 for faster learning
+    learning_rate: 0.0005  # Reduced from 0.001 - was causing instability
     seed: 42
     use_amp: false
     grad_clip: 1.0

@@ -380,7 +380,7 @@ def main():
         'info_nce',  # InfoNCE loss: classification
         temperature=loss_config.get('temperature', 0.07)
     )
-    prompt_weight = loss_config.get('prompt_weight', 100.0)  # λ=100 according to paper
+    prompt_weight = loss_config.get('prompt_weight', 0.5)  # Default: 0.5 (balanced with class loss)
     
     # Dummy criterion for compatibility (not used)
     criterion = prompt_criterion
@@ -419,8 +419,8 @@ def main():
     trainer.prompt_criterion = prompt_criterion.to(device)
     trainer.class_criterion = class_criterion.to(device)
     trainer.prompt_weight = prompt_weight
-    trainer.class_loss_weight = loss_config.get('class_loss_weight', 1.0)  # Weight for class loss (emphasize classification)
-    trainer.identity_penalty = loss_config.get('identity_penalty', 5.0)  # Penalty for identity mapping
+    trainer.class_loss_weight = loss_config.get('class_loss_weight', 3.0)  # Weight for class loss (emphasize classification)
+    trainer.identity_penalty = loss_config.get('identity_penalty', 2.0)  # Penalty for identity mapping
     trainer.labels = labels
     
     # Resume if specified
