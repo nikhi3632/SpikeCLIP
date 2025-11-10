@@ -4,7 +4,7 @@ import torch.nn as nn
 from typing import Optional
 
 from models.coarse_reconstruction import CoarseSNN
-from models.prompt_learning import PromptAdapter
+from models.prompt_learning import HQ_LQ_PromptAdapter
 from models.refinement import RefinementNet
 
 class SpikeCLIPModel(nn.Module):
@@ -21,15 +21,17 @@ class SpikeCLIPModel(nn.Module):
     def __init__(
         self,
         coarse_model: CoarseSNN,
-        prompt_model: PromptAdapter,
+        prompt_model: HQ_LQ_PromptAdapter,
         refine_model: RefinementNet,
-        return_features: bool = True
+        return_features: bool = True,
+        labels: Optional[list] = None
     ):
         super().__init__()
         self.coarse_model = coarse_model
         self.prompt_model = prompt_model
         self.refine_model = refine_model
         self.return_features = return_features
+        self.labels = labels
         
         # Freeze all models by default (they should be pre-trained)
         for param in self.coarse_model.parameters():
@@ -59,13 +61,14 @@ class SpikeCLIPModel(nn.Module):
         # Stage 1: Coarse reconstruction
         coarse_images = self.coarse_model(spikes)  # [B, 3, H, W]
         
-        # Stage 2: Prompt learning (get CLIP features)
-        # Note: text_features not needed here - only used during training for CLIP loss
-        # For inference/classification, we get all class embeddings separately
-        image_features = self.prompt_model.get_clip_features(coarse_images)  # [B, D]
-        
         # Stage 3: Refinement
         refined_images = self.refine_model(coarse_images)  # [B, 3, H, W]
+        
+        # Stage 2: Prompt learning (get CLIP features from refined images for better classification)
+        # Use refined images for classification (better than coarse images)
+        # Note: text_features not needed here - only used during training for CLIP loss
+        # For inference/classification, we get all class embeddings separately
+        image_features = self.prompt_model.get_clip_features(refined_images)  # [B, D]
         
         if self.return_features:
             return refined_images, image_features, coarse_images
@@ -73,14 +76,15 @@ class SpikeCLIPModel(nn.Module):
             return refined_images, coarse_images
     
     def get_clip_features(self, spikes: torch.Tensor) -> torch.Tensor:
-        """Get CLIP features from spikes."""
+        """Get CLIP features from spikes (using refined images for better classification)."""
         coarse_images = self.coarse_model(spikes)
-        clip_features = self.prompt_model.get_clip_features(coarse_images)
+        refined_images = self.refine_model(coarse_images)
+        clip_features = self.prompt_model.get_clip_features(refined_images)
         return clip_features
     
     def classify(self, spikes: torch.Tensor) -> torch.Tensor:
         """
-        Classify spikes using CLIP features.
+        Classify spikes using CLIP features from refined images.
         
         Args:
             spikes: [B, T, H, W] input spikes
@@ -88,12 +92,28 @@ class SpikeCLIPModel(nn.Module):
         Returns:
             predictions: [B] predicted class indices
         """
-        coarse_images = self.coarse_model(spikes)
-        image_features = self.prompt_model.get_clip_features(coarse_images)
+        import clip
+        import torch.nn.functional as F
         
-        # Get all text embeddings
-        all_label_indices = torch.arange(self.prompt_model.num_classes, device=spikes.device)
-        all_text_features = self.prompt_model.get_text_embeddings(all_label_indices)
+        coarse_images = self.coarse_model(spikes)
+        refined_images = self.refine_model(coarse_images)
+        # Use refined images for classification (better than coarse images)
+        image_features = self.prompt_model.get_clip_features(refined_images)
+        
+        # Get CLIP model from prompt model
+        clip_model = self.prompt_model.clip_model
+        
+        # Use CLIP's encode_text directly for multi-class classification
+        # (HQ_LQ_PromptAdapter is for binary classification, not multi-class)
+        if self.labels is None:
+            raise ValueError("Labels must be provided for classification")
+        
+        # Compute text features for all labels using CLIP
+        text_prompts = [f"a photo of a {label}" for label in self.labels]
+        text_tokens = clip.tokenize(text_prompts).to(spikes.device)
+        with torch.no_grad():
+            all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+            all_text_features = F.normalize(all_text_features, dim=-1)
         
         # Compute similarity
         similarities = torch.matmul(image_features, all_text_features.t())

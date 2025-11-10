@@ -5,7 +5,7 @@ from typing import Tuple
 
 from models.spikeclip_model import SpikeCLIPModel
 from models.coarse_reconstruction import CoarseSNN
-from models.prompt_learning import PromptAdapter
+from models.prompt_learning import HQ_LQ_PromptAdapter
 from models.refinement import RefinementNet
 
 def load_combined_model(checkpoint_path: str, device: torch.device) -> Tuple[SpikeCLIPModel, dict]:
@@ -51,30 +51,28 @@ def load_combined_model(checkpoint_path: str, device: torch.device) -> Tuple[Spi
     # Stage 2
     prompt_config = config.get('prompt', {})
     model_config = prompt_config.get('model', {})
-    num_classes = model_config.get('num_classes', len(labels))
-    if num_classes == 101:  # Default placeholder
-        num_classes = len(labels)
     
-    prompt_model = PromptAdapter(
-        clip_dim=model_config.get('clip_dim', 512),
-        num_classes=num_classes,
+    # Load HQ_LQ_PromptAdapter (trained in Stage 2)
+    prompt_model = HQ_LQ_PromptAdapter(
+        clip_model_name=model_config.get('clip_model_name', 'ViT-B/32'),
         prompt_dim=model_config.get('prompt_dim', 77),
-        freeze_image_encoder=model_config.get('freeze_image_encoder', True),
-        class_labels=labels  # Pass labels for better initialization
+        freeze_image_encoder=model_config.get('freeze_image_encoder', True)
     )
     
     # Stage 3
     refine_config = config.get('refine', {})
     refine_model_config = refine_config.get('model', {})
+    # Always use use_identity=False to ensure UNet is used (not identity mapping)
     refine_model = RefinementNet(
         in_channels=refine_model_config.get('in_channels', 3),
         out_channels=refine_model_config.get('out_channels', 3),
         base_channels=refine_model_config.get('base_channels', 64),
-        num_down=refine_model_config.get('num_down', 4)
+        num_down=refine_model_config.get('num_down', 4),
+        use_identity=False  # Always use UNet, never identity mapping
     )
     
     # Create unified model
-    model = SpikeCLIPModel(coarse_model, prompt_model, refine_model, return_features=True)
+    model = SpikeCLIPModel(coarse_model, prompt_model, refine_model, return_features=True, labels=labels)
     
     # Load state dict with validation
     missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)

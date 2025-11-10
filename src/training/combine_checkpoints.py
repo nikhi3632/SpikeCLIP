@@ -10,7 +10,7 @@ import argparse
 from typing import Dict, Any
 
 from models.coarse_reconstruction import CoarseSNN
-from models.prompt_learning import PromptAdapter
+from models.prompt_learning import HQ_LQ_PromptAdapter
 from models.refinement import RefinementNet
 from models.spikeclip_model import SpikeCLIPModel
 from utils.checkpointing import load_best_checkpoint
@@ -54,49 +54,26 @@ def combine_checkpoints(
     )
     
     # Load Stage 2: Prompt
-    # Stage 2 uses HQ_LQ_PromptAdapter for binary classification (HQ vs LQ)
-    # But for inference, we need PromptAdapter for multi-class classification
-    # We'll create a PromptAdapter that uses CLIP's image encoder from HQ_LQ_PromptAdapter
-    from models.prompt_learning import HQ_LQ_PromptAdapter
+    # Stage 2 trains HQ_LQ_PromptAdapter for binary classification (HQ vs LQ)
+    # For inference, we use HQ_LQ_PromptAdapter directly (it has get_clip_features method)
+    # Classification uses CLIP's encode_text directly (not prompt model)
     prompt_config = config.get('prompt', {})
     model_config = prompt_config.get('model', {})
-    num_classes = len(labels)
     
-    # First, load HQ_LQ_PromptAdapter to get the image encoder
-    hq_lq_prompt_model = HQ_LQ_PromptAdapter(
+    # Load the trained HQ_LQ_PromptAdapter directly
+    prompt_model = HQ_LQ_PromptAdapter(
         clip_model_name=model_config.get('clip_model_name', 'ViT-B/32'),
         prompt_dim=model_config.get('prompt_dim', 77),
         freeze_image_encoder=True
     )
     print(f"Loading HQ/LQ prompt model from {checkpoint_dir / 'prompt_best.pth'}")
-    try:
-        load_best_checkpoint(
-            str(checkpoint_dir),
-            hq_lq_prompt_model,
-            device=device,
-            prefix='prompt',
-            strict=False
-        )
-        # Extract the image encoder from HQ_LQ_PromptAdapter
-        image_encoder = hq_lq_prompt_model.image_encoder
-        clip_model = hq_lq_prompt_model.clip_model
-    except Exception as e:
-        print(f"Warning: Failed to load HQ/LQ prompt model ({e}). Using default PromptAdapter.")
-        image_encoder = None
-        clip_model = None
-    
-    # Create PromptAdapter for multi-class classification using the same image encoder
-    prompt_model = PromptAdapter(
-        image_encoder=image_encoder,  # Use image encoder from HQ_LQ_PromptAdapter
-        clip_dim=model_config.get('clip_dim', 512),
-        num_classes=num_classes,
-        prompt_dim=model_config.get('prompt_dim', 77),
-        freeze_image_encoder=True,
-        clip_model_name=model_config.get('clip_model_name', 'ViT-B/32'),
-        class_labels=labels  # Pass labels for better initialization
+    load_best_checkpoint(
+        str(checkpoint_dir),
+        prompt_model,
+        device=device,
+        prefix='prompt',
+        strict=False
     )
-    # Note: We don't load the prompt checkpoint again - we just use the image encoder
-    # The class prompts will be initialized from CLIP text embeddings
     
     # Load Stage 3: Refine
     refine_config = config.get('refine', {})
@@ -132,7 +109,8 @@ def combine_checkpoints(
         coarse_model=coarse_model,
         prompt_model=prompt_model,
         refine_model=refine_model,
-        return_features=True
+        return_features=True,
+        labels=labels  # Pass labels for classification
     )
     
     # Save combined model

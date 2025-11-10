@@ -77,8 +77,8 @@ prompt:
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 5  # Stop if no improvement for 5 epochs
-    early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
+    early_stopping_patience: 10  # Stop if no improvement for 10 epochs (increased from 5)
+    early_stopping_min_delta: 0.00001  # Minimum improvement to reset patience (reduced from 0.0001 for low loss scale)
   
   # Optimizer configuration
   optimizer:
@@ -111,7 +111,8 @@ refine:
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 10.0  # λ=10 (reduced from 100 to prevent identity mapping)
+    prompt_weight: 1.0  # λ=1.0 (reduced from 10.0 to prevent identity mapping)
+    identity_penalty: 5.0  # Penalty for identity mapping (refined == coarse)
   
   # Training parameters
   training:

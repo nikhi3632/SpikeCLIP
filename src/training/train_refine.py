@@ -82,9 +82,14 @@ class RefineTrainer(Trainer):
                     # text_features is [num_classes, clip_dim] - pre-computed in __init__
                     class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                     
-                    # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                    # Identity penalty: penalize when refined == coarse (identity mapping)
+                    # This encourages actual refinement, not just copying
+                    l1_diff = F.l1_loss(refined_images, coarse_images)
+                    identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                    
+                    # Total loss: L_class + λ*L_prompt + identity_penalty
                     # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                    loss = class_loss + self.prompt_weight * prompt_loss
+                    loss = class_loss + self.prompt_weight * prompt_loss + identity_penalty
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -112,9 +117,14 @@ class RefineTrainer(Trainer):
                 # text_features is [num_classes, clip_dim] - pre-computed in __init__
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
-                # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                # Identity penalty: penalize when refined == coarse (identity mapping)
+                # This encourages actual refinement, not just copying
+                l1_diff = F.l1_loss(refined_images, coarse_images)
+                identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                
+                # Total loss: L_class + λ*L_prompt + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                loss = class_loss + self.prompt_weight * prompt_loss
+                loss = class_loss + self.prompt_weight * prompt_loss + identity_penalty
                 
                 loss.backward()
                 if self.grad_clip:
@@ -183,9 +193,14 @@ class RefineTrainer(Trainer):
                 # text_features is [num_classes, clip_dim] - pre-computed in __init__
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
-                # Total loss: L_class + λ*L_prompt (λ=100 according to paper)
+                # Identity penalty: penalize when refined == coarse (identity mapping)
+                # This encourages actual refinement, not just copying
+                l1_diff = F.l1_loss(refined_images, coarse_images)
+                identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                
+                # Total loss: L_class + λ*L_prompt + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                loss = class_loss + self.prompt_weight * prompt_loss
+                loss = class_loss + self.prompt_weight * prompt_loss + identity_penalty
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -398,6 +413,7 @@ def main():
     trainer.prompt_criterion = prompt_criterion.to(device)
     trainer.class_criterion = class_criterion.to(device)
     trainer.prompt_weight = prompt_weight
+    trainer.identity_penalty = loss_config.get('identity_penalty', 5.0)  # Penalty for identity mapping
     trainer.labels = labels
     
     # Resume if specified

@@ -153,6 +153,26 @@ class HQ_LQ_PromptAdapter(nn.Module):
         hq_prompt_features = F.normalize(hq_prompt_features, dim=-1)
         lq_prompt_features = F.normalize(lq_prompt_features, dim=-1)
         return hq_prompt_features, lq_prompt_features
+    
+    def get_clip_features(self, images: torch.Tensor) -> torch.Tensor:
+        """
+        Get CLIP image features from images.
+        
+        Args:
+            images: [B, 3, H, W] images
+        
+        Returns:
+            image_features: [B, clip_dim] CLIP-aligned image features
+        """
+        # Normalize images for CLIP
+        images_normalized = F.interpolate(images, size=(224, 224), mode='bilinear', align_corners=False)
+        images_normalized = torch.clamp(images_normalized, 0, 1)
+        
+        # Encode images using CLIP
+        image_features = self.image_encoder(images_normalized)  # [B, clip_dim]
+        image_features = F.normalize(image_features, dim=-1)
+        
+        return image_features
 
 
 class PromptAdapter(nn.Module):

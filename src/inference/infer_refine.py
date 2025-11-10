@@ -83,11 +83,13 @@ def main():
     coarse_model.eval()
     
     # Stage 3 model
+    # Always use use_identity=False to ensure UNet is used (not identity mapping)
     refine_model = RefinementNet(
         in_channels=model_config.get('in_channels', 3),
         out_channels=model_config.get('out_channels', 3),
         base_channels=model_config.get('base_channels', 64),
-        num_down=model_config.get('num_down', 4)
+        num_down=model_config.get('num_down', 4),
+        use_identity=False  # Always use UNet, never identity mapping
     )
     
     # Load refine checkpoint
