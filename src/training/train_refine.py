@@ -23,7 +23,6 @@ from training.optimizer_factory import build_optimizer, build_scheduler
 from utils.helpers import get_device, set_seed
 from utils.checkpointing import load_best_checkpoint
 from utils.logging import log_device_info
-import clip
 
 class RefineTrainer(Trainer):
     """Custom trainer for refinement stage."""
