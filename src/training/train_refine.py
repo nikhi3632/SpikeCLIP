@@ -124,9 +124,11 @@ class RefineTrainer(Trainer):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                 
-                # Total loss: L_class + λ*L_prompt + identity_penalty
+                # Total loss: α*L_class + λ*L_prompt + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                loss = class_loss + self.prompt_weight * prompt_loss + identity_penalty
+                # α (class_loss_weight) emphasizes class discrimination
+                # λ (prompt_weight) emphasizes HQ alignment
+                loss = self.class_loss_weight * class_loss + self.prompt_weight * prompt_loss + identity_penalty
                 
                 loss.backward()
                 if self.grad_clip:
@@ -200,9 +202,11 @@ class RefineTrainer(Trainer):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                 
-                # Total loss: L_class + λ*L_prompt + identity_penalty
+                # Total loss: α*L_class + λ*L_prompt + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                loss = class_loss + self.prompt_weight * prompt_loss + identity_penalty
+                # α (class_loss_weight) emphasizes class discrimination
+                # λ (prompt_weight) emphasizes HQ alignment
+                loss = self.class_loss_weight * class_loss + self.prompt_weight * prompt_loss + identity_penalty
                 
                 total_loss += loss.item()
                 num_batches += 1

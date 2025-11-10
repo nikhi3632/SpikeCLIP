@@ -24,7 +24,7 @@ coarse:
     l1_weight: 1.0
     l2_weight: 1.0
     perceptual_weight: 0.7  # Increased from 0.5 to encourage more semantic learning beyond copying
-    semantic_weight: 0.5  # Increased from 0.3 to ensure reconstructed images match text labels semantically
+    semantic_weight: 1.0  # Increased from 0.5 to ensure reconstructed images match text labels semantically (critical for classification)
   
   # Training parameters
   training:
@@ -112,12 +112,12 @@ refine:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
     prompt_weight: 0.5  # λ=0.5 (reduced from 1.0 to emphasize class discrimination)
-    class_loss_weight: 2.0  # α=2.0 (weight for class loss to emphasize classification)
+    class_loss_weight: 5.0  # α=5.0 (increased from 2.0 to strongly emphasize classification accuracy)
     identity_penalty: 5.0  # Penalty for identity mapping (refined == coarse)
   
   # Training parameters
   training:
-    epochs: 30  # Increased from 20 to allow more learning
+    epochs: 50  # Increased from 30 to allow more learning for better refinement
     batch_size: 8
     learning_rate: 0.001  # Increased from 0.0005 for faster learning
     seed: 42

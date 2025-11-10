@@ -123,12 +123,10 @@ train-coarse:
 
 train-prompt:
 	@echo "Training Stage 2: Prompt Learning..."
-	@echo "Note: Requires trained coarse checkpoint. Use --coarse-checkpoint to specify."
 	@cd src && python3 training/train_prompt.py --config ../$(CONFIG) --coarse-checkpoint outputs/checkpoints/ucaltech
 
 train-refine:
 	@echo "Training Stage 3: Refinement..."
-	@echo "Note: Requires trained coarse checkpoint. Use --coarse-checkpoint to specify."
 	@cd src && python3 training/train_refine.py --config ../$(CONFIG) --coarse-checkpoint outputs/checkpoints/ucaltech
 
 train:
