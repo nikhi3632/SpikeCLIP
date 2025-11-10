@@ -98,11 +98,26 @@ def main():
                 batch_time = time.time() - batch_start
                 latencies.append(batch_time)
             
-            # Classification (using already computed clip_features)
+            # Classification: Use CLIP text features directly (not prompt model)
+            import clip
+            import torch.nn.functional as F
+            with torch.no_grad():
+                # Get CLIP model from prompt model
+                clip_model = model.prompt_model.clip_model if hasattr(model.prompt_model, 'clip_model') else None
+                if clip_model is None:
+                    # Fallback: load CLIP model directly
+                    clip_model, _ = clip.load("ViT-B/32", device=device)
+                    clip_model.eval()
+                
+                # Compute text features for all labels using CLIP
+                text_prompts = [f"a photo of a {label}" for label in labels]
+                text_tokens = clip.tokenize(text_prompts).to(device)
+                all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                all_text_features = F.normalize(all_text_features, dim=-1)
+            
+            # Classification using CLIP features
             image_features = clip_features  # Already computed from forward pass
-            all_label_indices = torch.arange(len(labels), device=device)
-            all_text_features = model.prompt_model.get_text_embeddings(all_label_indices)
-            similarities = torch.matmul(image_features, all_text_features.t())
+            similarities = torch.matmul(image_features, all_text_features.t())  # [B, num_classes]
             predictions = similarities.argmax(dim=1)
             correct_predictions += (predictions == label_indices).sum().item()
             total_predictions += predictions.size(0)

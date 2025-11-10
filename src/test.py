@@ -63,9 +63,18 @@ def visualize_samples(
             from utils.hq_generation import generate_hq_images
             hq_images = generate_hq_images(spikes, method="mixture")  # [B, 3, H, W]
             
-            # Get all text embeddings for Stage 2 visualization
-            all_label_indices = torch.arange(model.prompt_model.num_classes, device=device)
-            all_text_features = model.prompt_model.get_text_embeddings(all_label_indices)
+            # Get all text embeddings for Stage 2 visualization using CLIP directly
+            import clip
+            import torch.nn.functional as F
+            with torch.no_grad():
+                clip_model = model.prompt_model.clip_model if hasattr(model.prompt_model, 'clip_model') else None
+                if clip_model is None:
+                    clip_model, _ = clip.load("ViT-B/32", device=device)
+                    clip_model.eval()
+                text_prompts = [f"a photo of a {label}" for label in labels]
+                text_tokens = clip.tokenize(text_prompts).to(device)
+                all_text_features = clip_model.encode_text(text_tokens)
+                all_text_features = F.normalize(all_text_features, dim=-1)
             
             # Visualize each sample in batch
             for i in range(min(spikes.size(0), num_samples - samples_visualized)):
@@ -351,11 +360,28 @@ def main():
             # Forward pass
             refined_images, clip_features, coarse_images = model(spikes, label_indices)
             
-            # Classification (using already computed clip_features)
+            # Classification: Use CLIP text features directly (not prompt model)
+            # The prompt model is HQ_LQ_PromptAdapter which doesn't have get_text_embeddings
+            # We need to use CLIP text features directly for classification
+            import clip
+            import torch.nn.functional as F
+            with torch.no_grad():
+                # Get CLIP model from prompt model
+                clip_model = model.prompt_model.clip_model if hasattr(model.prompt_model, 'clip_model') else None
+                if clip_model is None:
+                    # Fallback: load CLIP model directly
+                    clip_model, _ = clip.load("ViT-B/32", device=device)
+                    clip_model.eval()
+                
+                # Compute text features for all labels using CLIP
+                text_prompts = [f"a photo of a {label}" for label in labels]
+                text_tokens = clip.tokenize(text_prompts).to(device)
+                all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                all_text_features = F.normalize(all_text_features, dim=-1)
+            
+            # Classification using CLIP features
             image_features = clip_features  # Already computed from forward pass
-            all_label_indices = torch.arange(len(labels), device=device)
-            all_text_features = model.prompt_model.get_text_embeddings(all_label_indices)
-            similarities = torch.matmul(image_features, all_text_features.t())
+            similarities = torch.matmul(image_features, all_text_features.t())  # [B, num_classes]
             predictions = similarities.argmax(dim=1)
             correct_predictions += (predictions == label_indices).sum().item()
             total_predictions += predictions.size(0)

@@ -111,7 +111,7 @@ refine:
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 100.0  # λ=100 according to paper: L_total = L_class + λ*L_prompt
+    prompt_weight: 10.0  # λ=10 (reduced from 100 to prevent identity mapping)
   
   # Training parameters
   training:
