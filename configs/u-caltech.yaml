@@ -111,7 +111,8 @@ refine:
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 1.0  # λ=1.0 (reduced from 10.0 to prevent identity mapping)
+    prompt_weight: 0.5  # λ=0.5 (reduced from 1.0 to emphasize class discrimination)
+    class_loss_weight: 2.0  # α=2.0 (weight for class loss to emphasize classification)
     identity_penalty: 5.0  # Penalty for identity mapping (refined == coarse)
   
   # Training parameters
