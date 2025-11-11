@@ -64,6 +64,7 @@ def visualize_samples(
             hq_images = generate_hq_images(spikes, method="mixture")  # [B, 3, H, W]
             
             # Get all text embeddings for Stage 2 visualization using CLIP directly
+            # Use ensemble prompts for consistency with classification
             import clip
             import torch.nn.functional as F
             with torch.no_grad():
@@ -71,9 +72,25 @@ def visualize_samples(
                 if clip_model is None:
                     clip_model, _ = clip.load("ViT-B/32", device=device)
                     clip_model.eval()
-                text_prompts = [f"a photo of a {label}" for label in labels]
-                text_tokens = clip.tokenize(text_prompts).to(device)
-                all_text_features = clip_model.encode_text(text_tokens)
+                
+                # Use ensemble prompts (same as classification)
+                prompt_templates = [
+                    "a photo of a {}",
+                    "a high quality photo of a {}",
+                    "a clear image of a {}",
+                    "a picture of a {}"
+                ]
+                
+                all_text_features_list = []
+                for template in prompt_templates:
+                    text_prompts = [template.format(label) for label in labels]
+                    text_tokens = clip.tokenize(text_prompts).to(device)
+                    text_features = clip_model.encode_text(text_tokens)
+                    text_features = F.normalize(text_features, dim=-1)
+                    all_text_features_list.append(text_features)
+                
+                # Average the text features from different prompts (ensemble)
+                all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)
                 all_text_features = F.normalize(all_text_features, dim=-1)
             
             # Visualize each sample in batch
@@ -107,6 +124,9 @@ def visualize_samples(
                 
                 # Compute Stage 3 refinement metrics (refined vs coarse)
                 refined_tensor = refined_images[i:i+1]
+                # Clamp to [0, 1] before computing metrics
+                refined_tensor = torch.clamp(refined_tensor, 0, 1)
+                coarse_tensor = torch.clamp(coarse_tensor, 0, 1)
                 stage3_psnr = compute_psnr(refined_tensor, coarse_tensor)
                 stage3_ssim = compute_ssim(refined_tensor, coarse_tensor)
                 stage3_l1 = compute_l1_error(refined_tensor, coarse_tensor)
@@ -374,14 +394,35 @@ def main():
                     clip_model.eval()
                 
                 # Compute text features for all labels using CLIP
-                text_prompts = [f"a photo of a {label}" for label in labels]
-                text_tokens = clip.tokenize(text_prompts).to(device)
-                all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                # Use multiple prompt templates for better classification (ensemble approach)
+                prompt_templates = [
+                    "a photo of a {}",
+                    "a high quality photo of a {}",
+                    "a clear image of a {}",
+                    "a picture of a {}"
+                ]
+                
+                # Ensemble text features from multiple prompts
+                all_text_features_list = []
+                for template in prompt_templates:
+                    text_prompts = [template.format(label) for label in labels]
+                    text_tokens = clip.tokenize(text_prompts).to(device)
+                    text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                    text_features = F.normalize(text_features, dim=-1)
+                    all_text_features_list.append(text_features)
+                
+                # Average the text features from different prompts (ensemble)
+                all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)  # [num_classes, clip_dim]
                 all_text_features = F.normalize(all_text_features, dim=-1)
             
             # Classification using CLIP features
             image_features = clip_features  # Already computed from forward pass
-            similarities = torch.matmul(image_features, all_text_features.t())  # [B, num_classes]
+            # Ensure image features are normalized
+            image_features = F.normalize(image_features, dim=-1)
+            
+            # Compute similarity with temperature scaling for sharper distribution
+            temperature = 0.1  # Same as training temperature
+            similarities = torch.matmul(image_features, all_text_features.t()) / temperature
             predictions = similarities.argmax(dim=1)
             correct_predictions += (predictions == label_indices).sum().item()
             total_predictions += predictions.size(0)
@@ -392,6 +433,10 @@ def main():
             for i in range(spikes.size(0)):
                 pred_img = refined_images[i:i+1]
                 target_img = target[i:i+1]
+                
+                # Clamp images to [0, 1] before computing metrics
+                pred_img = torch.clamp(pred_img, 0, 1)
+                target_img = torch.clamp(target_img, 0, 1)
                 
                 # Metrics comparing refined to coarse (shows refinement quality)
                 psnr_values.append(compute_psnr(pred_img, target_img))

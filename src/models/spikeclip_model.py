@@ -109,14 +109,35 @@ class SpikeCLIPModel(nn.Module):
             raise ValueError("Labels must be provided for classification")
         
         # Compute text features for all labels using CLIP
-        text_prompts = [f"a photo of a {label}" for label in self.labels]
-        text_tokens = clip.tokenize(text_prompts).to(spikes.device)
-        with torch.no_grad():
-            all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
-            all_text_features = F.normalize(all_text_features, dim=-1)
+        # Use multiple prompt templates for better classification (ensemble approach)
+        prompt_templates = [
+            "a photo of a {}",
+            "a high quality photo of a {}",
+            "a clear image of a {}",
+            "a picture of a {}"
+        ]
         
-        # Compute similarity
-        similarities = torch.matmul(image_features, all_text_features.t())
+        # Ensemble text features from multiple prompts
+        all_text_features_list = []
+        for template in prompt_templates:
+            text_prompts = [template.format(label) for label in self.labels]
+            text_tokens = clip.tokenize(text_prompts).to(spikes.device)
+            with torch.no_grad():
+                text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                text_features = F.normalize(text_features, dim=-1)
+                all_text_features_list.append(text_features)
+        
+        # Average the text features from different prompts (ensemble)
+        all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)  # [num_classes, clip_dim]
+        all_text_features = F.normalize(all_text_features, dim=-1)
+        
+        # Ensure image features are normalized
+        image_features = F.normalize(image_features, dim=-1)
+        
+        # Compute similarity with temperature scaling for sharper distribution
+        # Lower temperature = sharper distribution = better discrimination
+        temperature = 0.1  # Same as training temperature
+        similarities = torch.matmul(image_features, all_text_features.t()) / temperature
         predictions = similarities.argmax(dim=1)
         
         return predictions
