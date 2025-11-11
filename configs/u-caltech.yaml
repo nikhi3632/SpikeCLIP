@@ -23,8 +23,8 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.3  # Reduced from 0.7 to focus more on pixel accuracy (reduces blurring)
-    semantic_weight: 1.0  # Reduced from 2.0 to balance pixel accuracy and semantics (reduces blurring)
+    perceptual_weight: 0.5  # Balanced: enough for semantic learning, not too much to cause blurring
+    semantic_weight: 1.5  # Increased for better semantic alignment (critical for classification)
   
   # Training parameters
   training:
@@ -68,7 +68,7 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 3.0  # Weight for multi-class classification loss (increased significantly to reach 80%+ accuracy)
+    multi_class_weight: 2.0  # Weight for multi-class classification loss (balanced: not too high to avoid overfitting)
   
   # Training parameters
   training:
@@ -111,12 +111,12 @@ refine:
   # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
-    temperature: 0.07  # Temperature for contrastive loss (reduced to 0.07 to match training and improve discrimination)
-    prompt_weight: 1.0  # λ=1.0 (balanced with structure/perceptual losses)
-    class_loss_weight: 2.0  # α=2.0 (reduced from 10.0 - was causing image degradation)
-    identity_penalty: 0.1  # Penalty for identity mapping (reduced further to allow more learning)
-    structure_weight: 1.0  # Weight for structure preservation (increased from 0.1 to preserve image quality)
-    perceptual_weight: 2.0  # Weight for perceptual loss (increased from 0.5 to ensure semantic improvement)
+    temperature: 0.07  # Temperature for contrastive loss
+    prompt_weight: 0.5  # λ=0.5 (reduced to prevent over-emphasis on HQ alignment)
+    class_loss_weight: 1.5  # α=1.5 (balanced: enough for classification, not too high to degrade quality)
+    identity_penalty: 0.5  # Penalty for identity mapping (increased to prevent copying)
+    structure_weight: 2.0  # Weight for structure preservation (increased to preserve image quality)
+    perceptual_weight: 1.5  # Weight for perceptual loss (balanced: semantic improvement without degradation)
   
   # Training parameters
   training:

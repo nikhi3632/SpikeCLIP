@@ -89,7 +89,7 @@ class RefineTrainer(Trainer):
                     # Structure preservation: L1 loss to maintain basic structure
                     # This ensures refinement improves quality without destroying structure
                     # Weight from config (default: 1.0)
-                    structure_weight = getattr(self, 'structure_weight', 1.0)
+                    structure_weight = getattr(self, 'structure_weight', 2.0)
                     structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                     
                     # Perceptual loss: ensure refined images have better CLIP features than coarse
@@ -103,9 +103,9 @@ class RefineTrainer(Trainer):
                     # This encourages semantic improvement
                     refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                     coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                    # Weight from config (default: 2.0)
-                    perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
+                    # Weight from config (default: 1.5)
+                    perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
                     perceptual_loss = perceptual_loss * perceptual_weight
                     
                     # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
@@ -153,7 +153,7 @@ class RefineTrainer(Trainer):
                 
                 # Structure preservation: small L1 loss to maintain basic structure
                 # This ensures refinement improves quality without destroying structure
-                structure_weight = getattr(self, 'structure_weight', 1.0)
+                structure_weight = getattr(self, 'structure_weight', 2.0)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                 
                 # Perceptual loss: ensure refined images have better CLIP features than coarse
@@ -167,8 +167,8 @@ class RefineTrainer(Trainer):
                 # This encourages semantic improvement
                 refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
+                perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
                 perceptual_loss = perceptual_loss * perceptual_weight
                 
                 # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
@@ -257,7 +257,7 @@ class RefineTrainer(Trainer):
                 
                 # Structure preservation: small L1 loss to maintain basic structure
                 # This ensures refinement improves quality without destroying structure
-                structure_weight = getattr(self, 'structure_weight', 1.0)
+                structure_weight = getattr(self, 'structure_weight', 2.0)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                 
                 # Perceptual loss: ensure refined images have better CLIP features than coarse
@@ -271,8 +271,8 @@ class RefineTrainer(Trainer):
                 # This encourages semantic improvement
                 refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
+                perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
                 perceptual_loss = perceptual_loss * perceptual_weight
                 
                 # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
