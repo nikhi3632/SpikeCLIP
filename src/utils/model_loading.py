@@ -75,11 +75,60 @@ def load_combined_model(checkpoint_path: str, device: torch.device) -> Tuple[Spi
     model = SpikeCLIPModel(coarse_model, prompt_model, refine_model, return_features=True, labels=labels)
     
     # Load state dict with validation
-    missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+    # Filter out incompatible keys (size mismatches) before loading
+    # This handles architecture changes (e.g., ConvTranspose2d -> Upsample + Conv2d)
+    model_state = model.state_dict()
+    checkpoint_state = checkpoint['model_state_dict']
+    
+    # Filter checkpoint state to only include keys that match in shape
+    filtered_checkpoint_state = {}
+    incompatible_keys = []
+    
+    for key, checkpoint_value in checkpoint_state.items():
+        if key in model_state:
+            model_value = model_state[key]
+            # Check if shapes match
+            if checkpoint_value.shape == model_value.shape:
+                filtered_checkpoint_state[key] = checkpoint_value
+            else:
+                incompatible_keys.append(f"{key}: checkpoint shape {checkpoint_value.shape} != model shape {model_value.shape}")
+        else:
+            # Key not in model, skip it
+            pass
+    
+    # Load filtered state dict
+    missing_keys, unexpected_keys = model.load_state_dict(filtered_checkpoint_state, strict=False)
+    
+    # Print warnings
+    if incompatible_keys:
+        print(f"⚠️  Warning: Architecture mismatch detected. {len(incompatible_keys)} keys have incompatible shapes:")
+        print(f"   This usually means the model architecture changed (e.g., ConvTranspose2d -> Upsample + Conv2d).")
+        print(f"   The incompatible keys will be initialized randomly. You should retrain Stage 1.")
+        print(f"   First {min(5, len(incompatible_keys))} incompatible keys:")
+        for key in incompatible_keys[:5]:
+            print(f"     - {key}")
+        if len(incompatible_keys) > 5:
+            print(f"     ... and {len(incompatible_keys) - 5} more")
+    
     if missing_keys:
-        print(f"Warning: Missing keys in checkpoint: {missing_keys}")
+        print(f"⚠️  Warning: Missing keys in checkpoint (will use default initialization): {len(missing_keys)} keys")
+        if len(missing_keys) <= 10:
+            for key in missing_keys:
+                print(f"     - {key}")
+        else:
+            for key in missing_keys[:5]:
+                print(f"     - {key}")
+            print(f"     ... and {len(missing_keys) - 5} more")
+    
     if unexpected_keys:
-        print(f"Warning: Unexpected keys in checkpoint: {unexpected_keys}")
+        print(f"⚠️  Warning: Unexpected keys in checkpoint (ignored): {len(unexpected_keys)} keys")
+        if len(unexpected_keys) <= 10:
+            for key in unexpected_keys:
+                print(f"     - {key}")
+        else:
+            for key in unexpected_keys[:5]:
+                print(f"     - {key}")
+            print(f"     ... and {len(unexpected_keys) - 5} more")
     
     # Move model to device
     model = model.to(device)
