@@ -86,11 +86,35 @@ class RefineTrainer(Trainer):
                     l1_diff = F.l1_loss(refined_images, coarse_images)
                     identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                     
-                    # Total loss: α*L_class + λ*L_prompt + identity_penalty
+                    # Structure preservation: small L1 loss to maintain basic structure
+                    # This ensures refinement improves quality without destroying structure
+                    structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                    
+                    # Perceptual loss: ensure refined images have better CLIP features than coarse
+                    # Get coarse image features for comparison
+                    coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                    coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                    coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                    coarse_features = F.normalize(coarse_features, dim=-1)
+                    
+                    # Perceptual loss: refined features should be closer to text features than coarse features
+                    # This encourages semantic improvement
+                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
+                    perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                    
+                    # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                     # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                     # α (class_loss_weight) emphasizes class discrimination
                     # λ (prompt_weight) emphasizes HQ alignment
-                    loss = self.class_loss_weight * class_loss + self.prompt_weight * prompt_loss + identity_penalty
+                    # structure_loss ensures basic structure is preserved
+                    # perceptual_loss ensures semantic improvement
+                    loss = (self.class_loss_weight * class_loss + 
+                           self.prompt_weight * prompt_loss + 
+                           structure_loss + 
+                           perceptual_loss + 
+                           identity_penalty)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -123,11 +147,35 @@ class RefineTrainer(Trainer):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                 
-                # Total loss: α*L_class + λ*L_prompt + identity_penalty
+                # Structure preservation: small L1 loss to maintain basic structure
+                # This ensures refinement improves quality without destroying structure
+                structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                
+                # Perceptual loss: ensure refined images have better CLIP features than coarse
+                # Get coarse image features for comparison
+                coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                coarse_features = F.normalize(coarse_features, dim=-1)
+                
+                # Perceptual loss: refined features should be closer to text features than coarse features
+                # This encourages semantic improvement
+                refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
+                perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                
+                # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                 # α (class_loss_weight) emphasizes class discrimination
                 # λ (prompt_weight) emphasizes HQ alignment
-                loss = self.class_loss_weight * class_loss + self.prompt_weight * prompt_loss + identity_penalty
+                # structure_loss ensures basic structure is preserved
+                # perceptual_loss ensures semantic improvement
+                loss = (self.class_loss_weight * class_loss + 
+                       self.prompt_weight * prompt_loss + 
+                       structure_loss + 
+                       perceptual_loss + 
+                       identity_penalty)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -201,11 +249,35 @@ class RefineTrainer(Trainer):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                 
-                # Total loss: α*L_class + λ*L_prompt + identity_penalty
+                # Structure preservation: small L1 loss to maintain basic structure
+                # This ensures refinement improves quality without destroying structure
+                structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                
+                # Perceptual loss: ensure refined images have better CLIP features than coarse
+                # Get coarse image features for comparison
+                coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                coarse_features = F.normalize(coarse_features, dim=-1)
+                
+                # Perceptual loss: refined features should be closer to text features than coarse features
+                # This encourages semantic improvement
+                refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
+                perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                
+                # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
                 # α (class_loss_weight) emphasizes class discrimination
                 # λ (prompt_weight) emphasizes HQ alignment
-                loss = self.class_loss_weight * class_loss + self.prompt_weight * prompt_loss + identity_penalty
+                # structure_loss ensures basic structure is preserved
+                # perceptual_loss ensures semantic improvement
+                loss = (self.class_loss_weight * class_loss + 
+                       self.prompt_weight * prompt_loss + 
+                       structure_loss + 
+                       perceptual_loss + 
+                       identity_penalty)
                 
                 total_loss += loss.item()
                 num_batches += 1
