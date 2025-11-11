@@ -109,27 +109,14 @@ class SpikeCLIPModel(nn.Module):
             raise ValueError("Labels must be provided for classification")
         
         # Compute text features for all labels using CLIP
-        # Use multiple prompt templates for better classification (ensemble approach)
-        prompt_templates = [
-            "a photo of a {}",
-            "a high quality photo of a {}",
-            "a clear image of a {}",
-            "a picture of a {}"
-        ]
-        
-        # Ensemble text features from multiple prompts
-        all_text_features_list = []
-        for template in prompt_templates:
-            text_prompts = [template.format(label) for label in self.labels]
-            text_tokens = clip.tokenize(text_prompts).to(spikes.device)
-            with torch.no_grad():
-                text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
-                text_features = F.normalize(text_features, dim=-1)
-                all_text_features_list.append(text_features)
-        
-        # Average the text features from different prompts (ensemble)
-        all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)  # [num_classes, clip_dim]
-        all_text_features = F.normalize(all_text_features, dim=-1)
+        # IMPORTANT: Use the SAME prompt template as Stage 3 training!
+        # Stage 3 training uses: "a photo of a {label}"
+        # Using different prompts causes distribution shift and low accuracy
+        text_prompts = [f"a photo of a {label}" for label in self.labels]
+        text_tokens = clip.tokenize(text_prompts).to(spikes.device)
+        with torch.no_grad():
+            all_text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+            all_text_features = F.normalize(all_text_features, dim=-1)
         
         # Ensure image features are normalized
         image_features = F.normalize(image_features, dim=-1)
