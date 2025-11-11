@@ -98,6 +98,8 @@ class SpikeCLIPModel(nn.Module):
         coarse_images = self.coarse_model(spikes)
         refined_images = self.refine_model(coarse_images)
         # Use refined images for classification (better than coarse images)
+        # NOTE: If refinement degrades semantic information, we could use coarse_images instead
+        # For now, using refined_images as they should be improved by Stage 3
         image_features = self.prompt_model.get_clip_features(refined_images)
         
         # Get CLIP model from prompt model

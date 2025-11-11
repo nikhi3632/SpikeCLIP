@@ -68,7 +68,7 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 0.0  # Weight for multi-class classification loss (0.0 = disabled to align with paper, >0 = enabled)
+    multi_class_weight: 0.5  # Weight for multi-class classification loss (enabled to improve multi-class accuracy)
   
   # Training parameters
   training:
@@ -78,7 +78,7 @@ prompt:
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 10  # Stop if no improvement for 10 epochs (increased from 5 to allow multi-class learning)
+    early_stopping_patience: 5  # Stop if no improvement for 10 epochs (increased from 5 to allow multi-class learning)
     early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience (reduced from 0.00001 for very low loss scale with multi-class)
   
   # Optimizer configuration
