@@ -124,8 +124,9 @@ class SpikeCLIPModel(nn.Module):
         image_features = F.normalize(image_features, dim=-1)
         
         # Compute similarity with temperature scaling for sharper distribution
+        # IMPORTANT: Use the SAME temperature as training (0.07 from InfoNCE loss)
         # Lower temperature = sharper distribution = better discrimination
-        temperature = 0.1  # Same as training temperature
+        temperature = 0.07  # Match training temperature (from InfoNCE loss in Stage 3)
         similarities = torch.matmul(image_features, all_text_features.t()) / temperature
         predictions = similarities.argmax(dim=1)
         

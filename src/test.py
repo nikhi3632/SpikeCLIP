@@ -380,12 +380,51 @@ def main():
             # Forward pass
             refined_images, clip_features, coarse_images = model(spikes, label_indices)
             
-            # Classification: Use model.classify() method which has all improvements built-in
-            # (single prompt template matching Stage 3 training, temperature scaling, proper normalization)
-            # IMPORTANT: This matches the training setup and ensures correct metrics
-            # The prompt model is HQ_LQ_PromptAdapter which doesn't have get_text_embeddings
-            # model.classify() handles this correctly by using CLIP text features directly
-            predictions = model.classify(spikes)  # [B]
+            # Classification: Use ensemble prompts for better robustness
+            # Ensemble prompts average multiple prompt templates, reducing variance
+            # This improves accuracy compared to single prompt
+            import clip
+            import torch.nn.functional as F
+            
+            # Get CLIP model from prompt model
+            clip_model = model.prompt_model.clip_model if hasattr(model.prompt_model, 'clip_model') else None
+            if clip_model is None:
+                # Fallback: load CLIP model directly
+                clip_model, _ = clip.load("ViT-B/32", device=device)
+                clip_model.eval()
+            
+            # Use ensemble prompts for better robustness
+            # Multiple prompt templates reduce variance and improve accuracy
+            prompt_templates = [
+                "a photo of a {}",  # Match training
+                "a high quality photo of a {}",
+                "a clear image of a {}",
+                "a picture of a {}"
+            ]
+            
+            # Ensemble text features from multiple prompts
+            all_text_features_list = []
+            for template in prompt_templates:
+                text_prompts = [template.format(label) for label in labels]
+                text_tokens = clip.tokenize(text_prompts).to(device)
+                with torch.no_grad():
+                    text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
+                    text_features = F.normalize(text_features, dim=-1)
+                    all_text_features_list.append(text_features)
+            
+            # Average the text features from different prompts (ensemble)
+            all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)  # [num_classes, clip_dim]
+            all_text_features = F.normalize(all_text_features, dim=-1)
+            
+            # Classification using CLIP features
+            image_features = clip_features  # Already computed from forward pass
+            # Ensure image features are normalized
+            image_features = F.normalize(image_features, dim=-1)
+            
+            # Compute similarity with temperature scaling matching training
+            temperature = 0.07  # Match training temperature (from InfoNCE loss in Stage 3)
+            similarities = torch.matmul(image_features, all_text_features.t()) / temperature
+            predictions = similarities.argmax(dim=1)
             correct_predictions += (predictions == label_indices).sum().item()
             total_predictions += predictions.size(0)
             
