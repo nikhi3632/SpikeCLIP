@@ -246,13 +246,41 @@ def main():
             args.checkpoint,
             model,
             device=device,
-            prefix='coarse'
+            prefix='coarse',
+            strict=False  # Allow partial loading if architecture changed
         )
         print("✅ Stage 1 checkpoint loaded successfully")
+        print("⚠️  Note: If architecture changed, some layers may not be loaded.")
+        print("   If visualization shows poor results, retrain Stage 1: make train-coarse")
     except FileNotFoundError as e:
         print(f"❌ Error: {e}")
         print("   Make sure Stage 1 is trained first: make train-coarse")
         return
+    except RuntimeError as e:
+        error_msg = str(e)
+        if "size mismatch" in error_msg or "Error(s) in loading state_dict" in error_msg:
+            print(f"\n⚠️  WARNING: Checkpoint architecture mismatch detected!")
+            print(f"   " + "=" * 70)
+            print(f"   The old checkpoint was saved with a different architecture.")
+            print(f"   ")
+            print(f"   Old architecture: ConvTranspose2d (transposed convolution)")
+            print(f"   New architecture: Upsample + Conv2d (bilinear upsampling)")
+            print(f"   ")
+            print(f"   This means the checkpoint cannot be loaded into the new model.")
+            print(f"   " + "=" * 70)
+            print(f"   ")
+            print(f"   SOLUTION: Retrain Stage 1 with the new architecture")
+            print(f"   ")
+            print(f"   Run: make train-coarse")
+            print(f"   ")
+            print(f"   The new architecture has:")
+            print(f"   - Improved temporal aggregation (reduces blurring)")
+            print(f"   - Global normalization (better intensity preservation)")
+            print(f"   - Bilinear upsampling (sharper outputs)")
+            print(f"   ")
+            return
+        else:
+            raise
     
     # Visualize
     visualize_stage1(model, test_loader, device, args.num_samples, args.output_dir, labels)
