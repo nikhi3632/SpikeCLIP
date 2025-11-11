@@ -128,10 +128,10 @@ class CoarseSNN(nn.Module):
         # Combine mean, variance, and max for richer temporal information
         # Mean: overall intensity (can blur temporal details)
         # Variance: temporal dynamics and motion
-        # Max: preserves sharp details (reduces blurring) - INCREASE WEIGHT
-        # Weight max MORE to preserve sharpness and reduce blurring
-        # Reduced mean weight to reduce blurring from averaging
-        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
+        # Max: preserves sharp details (reduces blurring)
+        # Adjusted weights to better preserve structure and reduce blurring
+        # Increased max weight to preserve sharp details, reduced mean to reduce blurring
+        x = 0.4 * spike_mean + 0.2 * spike_var + 0.6 * spike_max  # [B, 1, H, W]
         
         # Normalize to [0, 1] range for better training stability
         # Use global normalization across batch to preserve intensity relationships
