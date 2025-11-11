@@ -68,23 +68,23 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 0.5  # Weight for multi-class classification loss (enabled to improve multi-class accuracy)
+    multi_class_weight: 3.0  # Weight for multi-class classification loss (increased significantly to reach 80%+ accuracy)
   
   # Training parameters
   training:
-    epochs: 100  # Increased from 50 to allow more time for learning discriminative features
+    epochs: 150  # Increased significantly to allow more time for learning discriminative features (target: 80%+ accuracy)
     batch_size: 8
-    learning_rate: 0.0005  # Reduced from 0.001 for more stable training
+    learning_rate: 0.001  # Increased from 0.0005 for faster learning with higher multi_class_weight
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 5  # Stop if no improvement for 10 epochs (increased from 5 to allow multi-class learning)
-    early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience (reduced from 0.00001 for very low loss scale with multi-class)
+    early_stopping_patience: 10  # Increased to allow more learning time
+    early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.0005  # Can override training.learning_rate (reduced from 0.001 for stability)
+    lr: 0.001  # Can override training.learning_rate (match training.learning_rate for consistency)
     weight_decay: 0.0001  # Reduced from 0.01 to allow better learning
     momentum: 0.9  # Only for SGD
   
@@ -111,26 +111,26 @@ refine:
   # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
-    temperature: 0.1  # Temperature for contrastive loss (increased from 0.07 to reduce InfoNCE loss scale)
-    prompt_weight: 1.0  # λ=1.0 (reduced from 1.5 to balance with new losses)
-    class_loss_weight: 2.0  # α=2.0 (increased from 1.0 to emphasize classification accuracy)
-    identity_penalty: 0.5  # Penalty for identity mapping (reduced to allow more refinement)
+    temperature: 0.07  # Temperature for contrastive loss (reduced to 0.07 to match training and improve discrimination)
+    prompt_weight: 0.5  # λ=0.5 (reduced to emphasize classification more)
+    class_loss_weight: 10.0  # α=10.0 (increased significantly to reach 80%+ accuracy - classification is the main goal)
+    identity_penalty: 0.1  # Penalty for identity mapping (reduced further to allow more learning)
   
   # Training parameters
   training:
-    epochs: 50  # Increased from 30 to allow more learning for better refinement
+    epochs: 100  # Increased significantly to allow more learning for better classification (target: 80%+ accuracy)
     batch_size: 8
-    learning_rate: 0.0001  # Reduced from 0.0005 - high loss requires smaller steps for stability
+    learning_rate: 0.0005  # Increased from 0.0001 for faster learning with higher class_loss_weight
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 5  # Stop if no improvement for 5 epochs
+    early_stopping_patience: 10  # Increased to allow more learning time
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.0001  # Can override training.learning_rate (reduced for stability with high loss)
+    lr: 0.0005  # Can override training.learning_rate (match training.learning_rate for consistency)
     weight_decay: 0.0001
     momentum: 0.9  # Only for SGD
   
