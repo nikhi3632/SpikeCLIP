@@ -27,7 +27,7 @@ REMOTE_DIR ?= ~/spike-clip
 
 .PHONY: help clean data test train-coarse train-prompt train-refine train \
         infer-coarse infer-prompt infer-refine infer \
-        combine-checkpoints evaluate plot-metrics login sync-up sync-down
+        combine-checkpoints evaluate visualize-stage1 plot-metrics login sync-up sync-down
 
 # Default target
 help:
@@ -52,6 +52,7 @@ help:
 	@echo "  make combine-checkpoints - Combine stage checkpoints into unified model"
 	@echo "  make evaluate          - Evaluate combined model (metrics only)"
 	@echo "  make test              - Test combined model (with visualization)"
+	@echo "  make visualize-stage1 - Visualize Stage 1 with metrics (for verification)"
 	@echo "  make plot-metrics      - Plot metrics from JSON log files"
 	@echo "  make login            - SSH to remote (uses SSH_KEY, HOST)"
 	@echo "  make sync-up          - Sync local changes to remote server"
@@ -172,6 +173,11 @@ test:
 	@echo "Testing combined model (with visualization)..."
 	@cd src && python3 test.py --config ../$(CONFIG) \
 		--checkpoint outputs/checkpoints/ucaltech/combined_model.pth
+
+visualize-stage1:
+	@echo "Visualizing Stage 1 with metrics (for verification)..."
+	@cd src && python3 visualize_stage1.py --config ../$(CONFIG) \
+		--checkpoint outputs/checkpoints/ucaltech
 
 # Remove Python bytecode caches and compiled files across the repo
 clean:

@@ -86,9 +86,11 @@ class RefineTrainer(Trainer):
                     l1_diff = F.l1_loss(refined_images, coarse_images)
                     identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
                     
-                    # Structure preservation: small L1 loss to maintain basic structure
+                    # Structure preservation: L1 loss to maintain basic structure
                     # This ensures refinement improves quality without destroying structure
-                    structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                    # Weight from config (default: 1.0)
+                    structure_weight = getattr(self, 'structure_weight', 1.0)
+                    structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                     
                     # Perceptual loss: ensure refined images have better CLIP features than coarse
                     # Get coarse image features for comparison
@@ -102,7 +104,9 @@ class RefineTrainer(Trainer):
                     refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                     coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                     perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                    perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                    # Weight from config (default: 2.0)
+                    perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                    perceptual_loss = perceptual_loss * perceptual_weight
                     
                     # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                     # This is why Stage 3 depends on Stage 2: it needs the learned prompts
@@ -149,7 +153,8 @@ class RefineTrainer(Trainer):
                 
                 # Structure preservation: small L1 loss to maintain basic structure
                 # This ensures refinement improves quality without destroying structure
-                structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                structure_weight = getattr(self, 'structure_weight', 1.0)
+                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                 
                 # Perceptual loss: ensure refined images have better CLIP features than coarse
                 # Get coarse image features for comparison
@@ -163,7 +168,8 @@ class RefineTrainer(Trainer):
                 refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                perceptual_loss = perceptual_loss * perceptual_weight
                 
                 # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
@@ -251,7 +257,8 @@ class RefineTrainer(Trainer):
                 
                 # Structure preservation: small L1 loss to maintain basic structure
                 # This ensures refinement improves quality without destroying structure
-                structure_loss = F.l1_loss(refined_images, coarse_images) * 0.1
+                structure_weight = getattr(self, 'structure_weight', 1.0)
+                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
                 
                 # Perceptual loss: ensure refined images have better CLIP features than coarse
                 # Get coarse image features for comparison
@@ -265,7 +272,8 @@ class RefineTrainer(Trainer):
                 refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
                 perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.1)  # Encourage improvement
-                perceptual_loss = perceptual_loss * 0.5  # Weight for perceptual loss
+                perceptual_weight = getattr(self, 'perceptual_weight', 2.0)
+                perceptual_loss = perceptual_loss * perceptual_weight
                 
                 # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
                 # This is why Stage 3 depends on Stage 2: it needs the learned prompts
@@ -452,6 +460,8 @@ def main():
         temperature=loss_config.get('temperature', 0.07)
     )
     prompt_weight = loss_config.get('prompt_weight', 0.5)  # Default: 0.5 (balanced with class loss)
+    structure_weight = loss_config.get('structure_weight', 1.0)  # Weight for structure preservation
+    perceptual_weight = loss_config.get('perceptual_weight', 2.0)  # Weight for perceptual loss
     
     # Dummy criterion for compatibility (not used)
     criterion = prompt_criterion
@@ -477,6 +487,8 @@ def main():
         device=device,
         checkpoint_dir=str(checkpoint_dir),
         use_amp=use_amp,
+        structure_weight=structure_weight,
+        perceptual_weight=perceptual_weight,
         grad_clip=grad_clip,
         checkpoint_prefix='refine',
         log_dir=log_dir,
@@ -492,6 +504,8 @@ def main():
     trainer.prompt_weight = prompt_weight
     trainer.class_loss_weight = loss_config.get('class_loss_weight', 3.0)  # Weight for class loss (emphasize classification)
     trainer.identity_penalty = loss_config.get('identity_penalty', 2.0)  # Penalty for identity mapping
+    trainer.structure_weight = structure_weight  # Weight for structure preservation
+    trainer.perceptual_weight = perceptual_weight  # Weight for perceptual loss
     trainer.labels = labels
     
     # Resume if specified

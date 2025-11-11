@@ -63,9 +63,11 @@ class CoarseSNN(nn.Module):
         )
 
         # Enhanced decoder with skip connections (U-Net style)
+        # Use bilinear upsampling + conv instead of ConvTranspose for sharper outputs (reduces checkerboard artifacts)
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(256, 128, kernel_size=3, padding=1),  # 256 from skip connection
             nn.BatchNorm2d(128),
             nn.ReLU(inplace=True),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),  # Additional conv
@@ -74,7 +76,8 @@ class CoarseSNN(nn.Module):
         )
         # Layer 3: 56x56 -> 112x112
         self.dec3 = nn.Sequential(
-            nn.ConvTranspose2d(256, 64, kernel_size=4, stride=2, padding=1),  # 128*2 from skip
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(256, 64, kernel_size=3, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
             nn.ReLU(inplace=True),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),  # Additional conv
@@ -83,7 +86,8 @@ class CoarseSNN(nn.Module):
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
-            nn.ConvTranspose2d(128, 32, kernel_size=4, stride=2, padding=1),  # 64*2 from skip
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(128, 32, kernel_size=3, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
             nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv
@@ -122,16 +126,19 @@ class CoarseSNN(nn.Module):
         spike_max = spikes.max(dim=1, keepdim=True)[0]  # [B, 1, H, W] - preserves sharp details
         
         # Combine mean, variance, and max for richer temporal information
-        # Mean: overall intensity
+        # Mean: overall intensity (can blur temporal details)
         # Variance: temporal dynamics and motion
-        # Max: preserves sharp details (reduces blurring)
-        # Weight max more to preserve sharpness
-        x = spike_mean + 0.3 * spike_var + 0.2 * spike_max  # [B, 1, H, W]
+        # Max: preserves sharp details (reduces blurring) - INCREASE WEIGHT
+        # Weight max MORE to preserve sharpness and reduce blurring
+        # Reduced mean weight to reduce blurring from averaging
+        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
         
         # Normalize to [0, 1] range for better training stability
-        # Use per-sample normalization to preserve relative intensities
-        x_min = x.view(x.size(0), -1).min(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
-        x_max = x.view(x.size(0), -1).max(dim=1, keepdim=True)[0].unsqueeze(-1).unsqueeze(-1)
+        # Use global normalization across batch to preserve intensity relationships
+        # Per-sample normalization can cause blurring by losing global context
+        # Global normalization preserves relative intensities better
+        x_min = x.min()
+        x_max = x.max()
         x_range = x_max - x_min + 1e-8
         x = (x - x_min) / x_range
         x = torch.clamp(x, 0, 1)
