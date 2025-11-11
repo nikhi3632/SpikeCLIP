@@ -111,16 +111,16 @@ refine:
   # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
-    temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 0.5  # λ=0.5 (reduced to emphasize classification)
-    class_loss_weight: 3.0  # α=3.0 (increased to emphasize classification accuracy)
-    identity_penalty: 2.0  # Penalty for identity mapping (reduced from 5.0 - was too strong)
+    temperature: 0.1  # Temperature for contrastive loss (increased from 0.07 to reduce InfoNCE loss scale)
+    prompt_weight: 2.0  # λ=2.0 (increased to emphasize HQ alignment and refinement)
+    class_loss_weight: 0.5  # α=0.5 (reduced from 3.0 - InfoNCE loss is already high for 101 classes)
+    identity_penalty: 1.0  # Penalty for identity mapping (reduced from 2.0 - was preventing learning)
   
   # Training parameters
   training:
     epochs: 50  # Increased from 30 to allow more learning for better refinement
     batch_size: 8
-    learning_rate: 0.0005  # Reduced from 0.001 - was causing instability
+    learning_rate: 0.0001  # Reduced from 0.0005 - high loss requires smaller steps for stability
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -130,7 +130,7 @@ refine:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.001  # Can override training.learning_rate (increased from 0.0005)
+    lr: 0.0001  # Can override training.learning_rate (reduced for stability with high loss)
     weight_decay: 0.0001
     momentum: 0.9  # Only for SGD
   
