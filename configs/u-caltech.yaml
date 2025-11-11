@@ -68,7 +68,7 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 2.0  # Weight for multi-class classification loss (balanced: not too high to avoid overfitting)
+    multi_class_weight: 3.0  # Weight for multi-class classification loss (increased to improve multi-class accuracy)
   
   # Training parameters
   training:

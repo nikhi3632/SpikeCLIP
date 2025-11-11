@@ -128,13 +128,27 @@ class PromptTrainer(Trainer):
             
             # Track classification accuracy (for monitoring)
             with torch.no_grad():
+                # Binary accuracy (HQ vs LQ)
                 hq_sim = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)
                 lq_sim = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)
                 logits = torch.stack([lq_sim, hq_sim], dim=1)
                 preds = logits.argmax(dim=1)
-                batch_acc = (preds == labels).float().mean().item()
+                batch_binary_acc = (preds == labels).float().mean().item()
+                
+                # Multi-class accuracy (if enabled)
+                batch_multi_class_acc = 0.0
+                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                    if hasattr(self, 'text_features') and self.text_features is not None:
+                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                        similarities = torch.matmul(hq_image_features, self.text_features.t())  # [B, num_classes]
+                        multi_class_preds = similarities.argmax(dim=1)  # [B]
+                        batch_multi_class_acc = (multi_class_preds == label_indices).float().mean().item()
+                
                 if batch_idx == 0:  # Log first batch accuracy occasionally
-                    pbar.set_postfix({'loss': f'{loss.item():.6f}', 'acc': f'{batch_acc:.3f}'})
+                    if batch_multi_class_acc > 0:
+                        pbar.set_postfix({'loss': f'{loss.item():.6f}', 'bin_acc': f'{batch_binary_acc:.3f}', 'cls_acc': f'{batch_multi_class_acc:.3f}'})
+                    else:
+                        pbar.set_postfix({'loss': f'{loss.item():.6f}', 'bin_acc': f'{batch_binary_acc:.3f}'})
             
             # Track latency
             if self.track_gpu_metrics:
@@ -171,6 +185,8 @@ class PromptTrainer(Trainer):
         num_batches = 0
         correct_predictions = 0
         total_predictions = 0
+        multi_class_correct = 0
+        multi_class_total = 0
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
@@ -226,7 +242,7 @@ class PromptTrainer(Trainer):
                     else:
                         loss = binary_loss
                 
-                # Compute classification accuracy
+                # Compute binary classification accuracy (HQ vs LQ)
                 hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
                 lq_similarity = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
                 logits = torch.stack([lq_similarity, hq_similarity], dim=1)  # [2*B, 2]
@@ -234,18 +250,30 @@ class PromptTrainer(Trainer):
                 correct_predictions += (predictions == labels).sum().item()
                 total_predictions += labels.size(0)
                 
+                # Compute multi-class classification accuracy (if enabled)
+                # Use HQ images for multi-class classification
+                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
+                    if hasattr(self, 'text_features') and self.text_features is not None:
+                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
+                        # Compute similarities with all class text features
+                        similarities = torch.matmul(hq_image_features, self.text_features.t())  # [B, num_classes]
+                        multi_class_predictions = similarities.argmax(dim=1)  # [B]
+                        multi_class_correct += (multi_class_predictions == label_indices).sum().item()
+                        multi_class_total += label_indices.size(0)
+                
                 total_loss += loss.item()
                 num_batches += 1
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
+        binary_accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
+        multi_class_accuracy = multi_class_correct / multi_class_total if multi_class_total > 0 else 0.0
         
         # Log accuracy if available
         if hasattr(self, 'log_dir') and self.log_dir:
             import os
             log_file = os.path.join(self.log_dir, 'prompt_train_log.txt')
             with open(log_file, 'a') as f:
-                f.write(f"Epoch {self.current_epoch}: Val Loss: {avg_loss:.4f}, Val Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})\n")
+                f.write(f"Epoch {self.current_epoch}: Val Loss: {avg_loss:.4f}, Binary Acc: {binary_accuracy:.4f}, Multi-class Acc: {multi_class_accuracy:.4f}\n")
         
         return avg_loss
 
