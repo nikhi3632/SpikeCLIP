@@ -114,16 +114,19 @@ class CoarseSNN(nn.Module):
         # Reset SNN state each forward so batches are independent
         functional.reset_net(self)
 
-        # Improved temporal aggregation: use mean + variance for richer features
-        # This provides better intensity and temporal variation information
+        # Improved temporal aggregation: use mean + variance + max for richer features
+        # This provides better intensity, temporal variation, and preserves sharp details
         # [B, T, H, W] -> [B, 1, H, W]
         spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
         spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+        spike_max = spikes.max(dim=1, keepdim=True)[0]  # [B, 1, H, W] - preserves sharp details
         
-        # Combine mean and variance for richer temporal information
-        # Variance helps capture temporal dynamics and motion
-        # Weight variance less to avoid over-emphasizing temporal variation
-        x = spike_mean + 0.3 * spike_var  # [B, 1, H, W]
+        # Combine mean, variance, and max for richer temporal information
+        # Mean: overall intensity
+        # Variance: temporal dynamics and motion
+        # Max: preserves sharp details (reduces blurring)
+        # Weight max more to preserve sharpness
+        x = spike_mean + 0.3 * spike_var + 0.2 * spike_max  # [B, 1, H, W]
         
         # Normalize to [0, 1] range for better training stability
         # Use per-sample normalization to preserve relative intensities
@@ -155,6 +158,11 @@ class CoarseSNN(nn.Module):
         x = self.dec1(d2)       # [B, 3, 224, 224]
 
         # Bound outputs to [0, 1] so images are viewable
-        x = torch.sigmoid(x)
+        # Use tanh + rescale instead of sigmoid to reduce blurring
+        # Sigmoid can cause saturation and blur fine details
+        # Tanh provides better gradient flow and sharper outputs
+        x = torch.tanh(x)  # [-1, 1]
+        x = (x + 1.0) / 2.0  # [0, 1]
+        x = torch.clamp(x, 0, 1)
         
         return x
