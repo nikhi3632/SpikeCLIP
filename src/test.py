@@ -109,7 +109,7 @@ def visualize_samples(
                 fig, axes = plt.subplots(1, 4, figsize=(16, 4), constrained_layout=True)
                 
                 # Input: Spike stream count map
-                axes[0].imshow(spike_count_normalized)
+                axes[0].imshow(spike_count_normalized, cmap='gray')
                 axes[0].set_title(f'INPUT\nSpike Stream\n({spike_count.sum():.0f} spikes)\nLabel: {batch_labels[i]}')
                 axes[0].axis('off')
                 

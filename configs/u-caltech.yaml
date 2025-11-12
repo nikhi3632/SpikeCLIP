@@ -127,7 +127,7 @@ refine:
   
   # Training parameters
   training:
-    epochs: 19  # According to paper: 19 epochs for Stage 3 (U-CALTECH)
+    epochs: 20  # According to paper: 19 epochs for Stage 3 (U-CALTECH)
     batch_size: 8
     learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
