@@ -170,12 +170,7 @@ def log_test_metrics(
         f.write(f"  L1 Error: {recon.get('avg_l1_error', 0):.4f}\n")
         f.write(f"  L2 Error: {recon.get('avg_l2_error', 0):.4f}\n")
         f.write("\n" + "-" * 60 + "\n")
-        f.write("Classification Metrics:\n")
-        f.write("-" * 60 + "\n")
-        class_metrics = metrics_dict.get('classification_metrics', {})
-        f.write(f"  Accuracy: {class_metrics.get('accuracy', 0):.4f} ({class_metrics.get('correct', 0)}/{class_metrics.get('total', 0)})\n")
-        f.write("=" * 60 + "\n")
-    
+
     # Save as JSON
     json_file = output_dir / 'test_log.json'
     with open(json_file, 'w') as f:
