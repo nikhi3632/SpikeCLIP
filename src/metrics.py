@@ -23,6 +23,15 @@ except ImportError:  # pragma: no cover - skimage is already declared as a dep, 
     skimage_brisque = skimage_niqe = skimage_piqe = None
     rgb2gray = None
 
+try:
+    import pyiqa
+
+    _PYIQA_AVAILABLE = True
+    _PYIQA_MODELS = {}
+except ImportError:  # pragma: no cover - fallback to NaN if pyiqa missing
+    _PYIQA_AVAILABLE = False
+    _PYIQA_MODELS = {}
+
 def compute_psnr(pred: torch.Tensor, target: torch.Tensor) -> float:
     """
     Compute Peak Signal-to-Noise Ratio.
@@ -111,34 +120,87 @@ def _prepare_tensor_for_iqa(image: torch.Tensor) -> Optional[np.ndarray]:
     return img_np.astype(np.float64)
 
 
-def compute_niqe_score(image: torch.Tensor) -> float:
-    """Compute NIQE (Naturalness Image Quality Evaluator) score for a single image tensor."""
-    if not _SKIMAGE_IQA_AVAILABLE:
+def _prepare_tensor_for_pyiqa(image: torch.Tensor) -> torch.Tensor:
+    """Convert tensor to BxCxHxW in [0,1] for pyiqa metrics."""
+    if not isinstance(image, torch.Tensor):
+        raise TypeError("Expected torch.Tensor input for image quality metrics")
+
+    with torch.no_grad():
+        img = image.detach().cpu().float()
+
+    if img.dim() == 4:
+        if img.size(0) != 1:
+            raise ValueError("Tensor with batch dimension must have batch size 1 for NR metrics")
+        img = img[0]  # C,H,W
+
+    if img.dim() == 2:  # H,W
+        img = img.unsqueeze(0)  # 1,H,W
+    elif img.dim() == 3:
+        if img.shape[0] in (1, 3):  # already C,H,W
+            pass
+        elif img.shape[2] in (1, 3):  # H,W,C -> transpose
+            img = img.permute(2, 0, 1)
+        else:
+            raise ValueError(f"Unsupported channel layout {img.shape} for NR metrics")
+    else:
+        raise ValueError(f"Unsupported tensor shape {img.shape} for NR metrics")
+
+    if img.shape[0] == 1:
+        img = img.repeat(3, 1, 1)  # pyiqa expects 3-channel by default
+    elif img.shape[0] > 3:
+        img = img[:3]
+
+    img = torch.clamp(img, 0, 1).unsqueeze(0)  # B,C,H,W
+    return img
+
+
+def _compute_pyiqa_metric(metric_name: str, image: torch.Tensor) -> float:
+    """Compute NR metric via pyiqa if available."""
+    if not _PYIQA_AVAILABLE:
         return float("nan")
     try:
-        gray = _prepare_tensor_for_iqa(image)
-        return float(skimage_niqe(gray))
+        if metric_name not in _PYIQA_MODELS:
+            model = pyiqa.create_metric(metric_name, as_loss=False, device="cpu")
+            model.eval()
+            _PYIQA_MODELS[metric_name] = model
+        else:
+            model = _PYIQA_MODELS[metric_name]
+        tensor = _prepare_tensor_for_pyiqa(image)
+        with torch.no_grad():
+            score = model(tensor).item()
+        return float(score)
     except Exception:
         return float("nan")
+
+
+def compute_niqe_score(image: torch.Tensor) -> float:
+    """Compute NIQE (Naturalness Image Quality Evaluator) score for a single image tensor."""
+    if _SKIMAGE_IQA_AVAILABLE:
+        try:
+            gray = _prepare_tensor_for_iqa(image)
+            return float(skimage_niqe(gray))
+        except Exception:
+            pass
+    return _compute_pyiqa_metric("niqe", image)
 
 
 def compute_brisque_score(image: torch.Tensor) -> float:
     """Compute BRISQUE (Blind/Referenceless Image Spatial Quality Evaluator) score."""
-    if not _SKIMAGE_IQA_AVAILABLE:
-        return float("nan")
-    try:
-        gray = _prepare_tensor_for_iqa(image)
-        return float(skimage_brisque(gray))
-    except Exception:
-        return float("nan")
+    if _SKIMAGE_IQA_AVAILABLE:
+        try:
+            gray = _prepare_tensor_for_iqa(image)
+            return float(skimage_brisque(gray))
+        except Exception:
+            pass
+    return _compute_pyiqa_metric("brisque", image)
 
 
 def compute_piqe_score(image: torch.Tensor) -> float:
     """Compute PIQE (Perception-based Image Quality Evaluator) score."""
-    if not _SKIMAGE_IQA_AVAILABLE:
-        return float("nan")
-    try:
-        gray = _prepare_tensor_for_iqa(image)
-        return float(skimage_piqe(gray))
-    except Exception:
-        return float("nan")
+    if _SKIMAGE_IQA_AVAILABLE:
+        try:
+            gray = _prepare_tensor_for_iqa(image)
+            return float(skimage_piqe(gray))
+        except Exception:
+            pass
+    return _compute_pyiqa_metric("piqe", image)
