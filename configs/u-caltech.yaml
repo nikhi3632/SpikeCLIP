@@ -19,15 +19,16 @@ coarse:
     out_channels: 3
   
   # Loss parameters
-  # Simplified loss: Focus on basic reconstruction first (L1+L2)
-  # Perceptual/semantic losses may be dominating and preventing learning
+  # FIX: Enable gradient loss for sharper images
+  # L1+L2 alone produces blurry, desaturated images
+  # Gradient loss encourages sharp edges and details
   loss:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.0  # Disabled temporarily - was preventing basic learning
-    semantic_weight: 0.0  # Disabled temporarily - was preventing basic learning
-    gradient_weight: 0.0  # Disabled temporarily - focus on basic reconstruction first
+    perceptual_weight: 0.0  # Disabled - was causing issues
+    semantic_weight: 0.0  # Disabled - was causing issues
+    gradient_weight: 0.1  # FIX: Enabled for sharper images (encourages edge preservation)
   
   # Training parameters
   training:
@@ -119,11 +120,13 @@ refine:
     type: "prompt"  # Prompt loss
     temperature: 0.07  # Temperature for contrastive loss
     # FIX: Prevent identity mapping - Stage 3 must actually refine, not copy
+    # Current metrics show 35-36 dB PSNR, 0.98 SSIM (still too similar to coarse)
+    # Need stronger constraints to force actual refinement
     reconstruction_weight: 1.0  # Primary: Reconstruction loss (L1)
-    structure_weight: 0.01  # FIX: Further reduced from 0.1 - was causing identity mapping
-    l2_weight: 0.01  # FIX: Further reduced from 0.05 - was causing identity mapping
-    prompt_weight: 0.5  # FIX: Increased from 0.1 - stronger guidance for refinement
-    identity_penalty: 1.0  # FIX: NEW - Penalize identity mapping (prevent copying)
+    structure_weight: 0.001  # FIX: Further reduced from 0.01 - still constraining too much
+    l2_weight: 0.001  # FIX: Further reduced from 0.01 - still smoothing too much
+    prompt_weight: 1.0  # FIX: Increased from 0.5 - stronger guidance toward HQ prompts
+    identity_penalty: 3.0  # FIX: Increased from 1.0 - stronger penalty for copying
     perceptual_weight: 0.0  # Disabled - was causing issues
   
   # Training parameters

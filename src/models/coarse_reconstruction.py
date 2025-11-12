@@ -124,10 +124,10 @@ class CoarseSNN(nn.Module):
         B, T, H, W = spikes.shape
         
         # TRUE SNN: Process temporal sequence through network
-        # Voxelization: Reduce temporal dimension for efficiency (200 → 30)
-        # OPTIMIZATION: Reduced from 50 to 30 for faster training (40% speedup)
-        # Still provides good temporal information while being much faster
-        target_length = 30  # Reduced from 50 to 30 for faster training
+        # Voxelization: Reduce temporal dimension for efficiency (200 → 50)
+        # NOTE: Tried reducing to 30 for speed, but quality degraded
+        # Keeping at 50 for best reconstruction quality
+        target_length = 50  # Optimal balance: good quality + reasonable speed
         if T > target_length:
             # Pad if needed
             if T % target_length != 0:
