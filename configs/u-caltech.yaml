@@ -28,9 +28,9 @@ coarse:
   
   # Training parameters
   training:
-    epochs: 50  # Reduced for faster testing (early stopping will prevent over-training)
+    epochs: 5  # According to paper: 5 epochs for Stage 1 (U-CALTECH)
     batch_size: 8
-    learning_rate: 0.0001  # Reduced for more stable training with higher perceptual/semantic weights
+    learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -40,7 +40,7 @@ coarse:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better regularization
-    lr: 0.0001  # Match training.learning_rate (reduced for stability)
+    lr: 0.00004  # According to paper: 4e-5 for U-CALTECH
     weight_decay: 0.0001  # Added weight decay to prevent collapse
     momentum: 0.9  # Only for SGD
   
@@ -72,9 +72,9 @@ prompt:
   
   # Training parameters
   training:
-    epochs: 50  # Reduced for faster testing (early stopping will prevent over-training)
+    epochs: 1  # According to paper: 1 epoch for Stage 2 (U-CALTECH)
     batch_size: 8
-    learning_rate: 0.001  # Increased from 0.0005 for faster learning with higher multi_class_weight
+    learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -84,7 +84,7 @@ prompt:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.001  # Can override training.learning_rate (match training.learning_rate for consistency)
+    lr: 0.00004  # According to paper: 4e-5 for U-CALTECH
     weight_decay: 0.0001  # Reduced from 0.01 to allow better learning
     momentum: 0.9  # Only for SGD
   
@@ -109,20 +109,24 @@ refine:
     num_down: 4  # Number of downsampling layers
   
   # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
+  # According to paper: L_total = L_class + λ*L_prompt (λ=100)
   loss:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 0.5  # λ=0.5 (reduced to prevent over-emphasis on HQ alignment)
-    class_loss_weight: 1.5  # α=1.5 (balanced: enough for classification, not too high to degrade quality)
-    identity_penalty: 0.5  # Penalty for identity mapping (increased to prevent copying)
-    structure_weight: 2.0  # Weight for structure preservation (increased to preserve image quality)
-    perceptual_weight: 1.5  # Weight for perceptual loss (balanced: semantic improvement without degradation)
+    prompt_weight: 100.0  # λ=100 according to paper (strong HQ alignment emphasis)
+    class_loss_weight: 1.0  # α=1.0 according to paper (L_class has weight 1.0)
+    # Note: Paper only uses L_class + λ*L_prompt, no additional losses
+    # We keep identity_penalty, structure_weight, perceptual_weight for stability
+    # but they should be set to 0.0 to match paper exactly
+    identity_penalty: 0.0  # Paper doesn't use this (set to 0.0 to match paper)
+    structure_weight: 0.0  # Paper doesn't use this (set to 0.0 to match paper)
+    perceptual_weight: 0.0  # Paper doesn't use this (set to 0.0 to match paper)
   
   # Training parameters
   training:
-    epochs: 50  # Reduced for faster testing (early stopping will prevent over-training)
+    epochs: 19  # According to paper: 19 epochs for Stage 3 (U-CALTECH)
     batch_size: 8
-    learning_rate: 0.0005  # Increased from 0.0001 for faster learning with higher class_loss_weight
+    learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -132,7 +136,7 @@ refine:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better generalization
-    lr: 0.0005  # Can override training.learning_rate (match training.learning_rate for consistency)
+    lr: 0.00004  # According to paper: 4e-5 for U-CALTECH
     weight_decay: 0.0001
     momentum: 0.9  # Only for SGD
   

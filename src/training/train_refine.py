@@ -81,44 +81,38 @@ class RefineTrainer(Trainer):
                     # text_features is [num_classes, clip_dim] - pre-computed in __init__
                     class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                     
-                    # Identity penalty: penalize when refined == coarse (identity mapping)
-                    # This encourages actual refinement, not just copying
+                    # According to paper: L_total = L_class + λ*L_prompt (λ=100)
+                    # Paper only uses these two losses, but we include additional losses
+                    # with configurable weights (set to 0.0 in config to match paper exactly)
+                    
+                    # Additional losses (disabled by default to match paper):
                     l1_diff = F.l1_loss(refined_images, coarse_images)
-                    identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                    identity_penalty = getattr(self, 'identity_penalty', 0.0)
+                    identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
                     
-                    # Structure preservation: L1 loss to maintain basic structure
-                    # This ensures refinement improves quality without destroying structure
-                    # Weight from config (default: 1.0)
-                    structure_weight = getattr(self, 'structure_weight', 2.0)
-                    structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
+                    structure_weight = getattr(self, 'structure_weight', 0.0)
+                    structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                     
-                    # Perceptual loss: ensure refined images have better CLIP features than coarse
-                    # Get coarse image features for comparison
-                    coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
-                    coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
-                    coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
-                    coarse_features = F.normalize(coarse_features, dim=-1)
+                    # Perceptual loss (disabled by default to match paper):
+                    perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
+                    if perceptual_weight > 0:
+                        coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                        coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                        coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                        coarse_features = F.normalize(coarse_features, dim=-1)
+                        refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                        coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                        perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                    else:
+                        perceptual_loss = 0.0
                     
-                    # Perceptual loss: refined features should be closer to text features than coarse features
-                    # This encourages semantic improvement
-                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
-                    # Weight from config (default: 1.5)
-                    perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
-                    perceptual_loss = perceptual_loss * perceptual_weight
-                    
-                    # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
-                    # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                    # α (class_loss_weight) emphasizes class discrimination
-                    # λ (prompt_weight) emphasizes HQ alignment
-                    # structure_loss ensures basic structure is preserved
-                    # perceptual_loss ensures semantic improvement
+                    # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
+                    # Additional losses are included but with weight 0.0 to match paper
                     loss = (self.class_loss_weight * class_loss + 
                            self.prompt_weight * prompt_loss + 
                            structure_loss + 
                            perceptual_loss + 
-                           identity_penalty)
+                           identity_penalty_term)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -146,42 +140,38 @@ class RefineTrainer(Trainer):
                 # text_features is [num_classes, clip_dim] - pre-computed in __init__
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
-                # Identity penalty: penalize when refined == coarse (identity mapping)
-                # This encourages actual refinement, not just copying
+                # According to paper: L_total = L_class + λ*L_prompt (λ=100)
+                # Paper only uses these two losses, but we include additional losses
+                # with configurable weights (set to 0.0 in config to match paper exactly)
+                
+                # Additional losses (disabled by default to match paper):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
-                identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                identity_penalty = getattr(self, 'identity_penalty', 0.0)
+                identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
                 
-                # Structure preservation: small L1 loss to maintain basic structure
-                # This ensures refinement improves quality without destroying structure
-                structure_weight = getattr(self, 'structure_weight', 2.0)
-                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
+                structure_weight = getattr(self, 'structure_weight', 0.0)
+                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                 
-                # Perceptual loss: ensure refined images have better CLIP features than coarse
-                # Get coarse image features for comparison
-                coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
-                coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
-                coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
-                coarse_features = F.normalize(coarse_features, dim=-1)
+                # Perceptual loss (disabled by default to match paper):
+                perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
+                if perceptual_weight > 0:
+                    coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                    coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                    coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                    coarse_features = F.normalize(coarse_features, dim=-1)
+                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                else:
+                    perceptual_loss = 0.0
                 
-                # Perceptual loss: refined features should be closer to text features than coarse features
-                # This encourages semantic improvement
-                refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
-                perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
-                perceptual_loss = perceptual_loss * perceptual_weight
-                
-                # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
-                # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                # α (class_loss_weight) emphasizes class discrimination
-                # λ (prompt_weight) emphasizes HQ alignment
-                # structure_loss ensures basic structure is preserved
-                # perceptual_loss ensures semantic improvement
+                # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
+                # Additional losses are included but with weight 0.0 to match paper
                 loss = (self.class_loss_weight * class_loss + 
                        self.prompt_weight * prompt_loss + 
                        structure_loss + 
                        perceptual_loss + 
-                       identity_penalty)
+                       identity_penalty_term)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -250,42 +240,38 @@ class RefineTrainer(Trainer):
                 # text_features is [num_classes, clip_dim] - pre-computed in __init__
                 class_loss = self.class_criterion(image_features, self.text_features, label_indices)
                 
-                # Identity penalty: penalize when refined == coarse (identity mapping)
-                # This encourages actual refinement, not just copying
+                # According to paper: L_total = L_class + λ*L_prompt (λ=100)
+                # Paper only uses these two losses, but we include additional losses
+                # with configurable weights (set to 0.0 in config to match paper exactly)
+                
+                # Additional losses (disabled by default to match paper):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
-                identity_penalty = self.identity_penalty * torch.exp(-l1_diff * 50.0)
+                identity_penalty = getattr(self, 'identity_penalty', 0.0)
+                identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
                 
-                # Structure preservation: small L1 loss to maintain basic structure
-                # This ensures refinement improves quality without destroying structure
-                structure_weight = getattr(self, 'structure_weight', 2.0)
-                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight
+                structure_weight = getattr(self, 'structure_weight', 0.0)
+                structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                 
-                # Perceptual loss: ensure refined images have better CLIP features than coarse
-                # Get coarse image features for comparison
-                coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
-                coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
-                coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
-                coarse_features = F.normalize(coarse_features, dim=-1)
+                # Perceptual loss (disabled by default to match paper):
+                perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
+                if perceptual_weight > 0:
+                    coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
+                    coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
+                    coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                    coarse_features = F.normalize(coarse_features, dim=-1)
+                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
+                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                else:
+                    perceptual_loss = 0.0
                 
-                # Perceptual loss: refined features should be closer to text features than coarse features
-                # This encourages semantic improvement
-                refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05)  # Encourage improvement (smaller offset)
-                perceptual_weight = getattr(self, 'perceptual_weight', 1.5)
-                perceptual_loss = perceptual_loss * perceptual_weight
-                
-                # Total loss: α*L_class + λ*L_prompt + structure_loss + perceptual_loss + identity_penalty
-                # This is why Stage 3 depends on Stage 2: it needs the learned prompts
-                # α (class_loss_weight) emphasizes class discrimination
-                # λ (prompt_weight) emphasizes HQ alignment
-                # structure_loss ensures basic structure is preserved
-                # perceptual_loss ensures semantic improvement
+                # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
+                # Additional losses are included but with weight 0.0 to match paper
                 loss = (self.class_loss_weight * class_loss + 
                        self.prompt_weight * prompt_loss + 
                        structure_loss + 
                        perceptual_loss + 
-                       identity_penalty)
+                       identity_penalty_term)
                 
                 total_loss += loss.item()
                 num_batches += 1
@@ -459,9 +445,11 @@ def main():
         'info_nce',  # InfoNCE loss: classification
         temperature=loss_config.get('temperature', 0.07)
     )
-    prompt_weight = loss_config.get('prompt_weight', 0.5)  # Default: 0.5 (balanced with class loss)
-    structure_weight = loss_config.get('structure_weight', 1.0)  # Weight for structure preservation
-    perceptual_weight = loss_config.get('perceptual_weight', 2.0)  # Weight for perceptual loss
+    prompt_weight = loss_config.get('prompt_weight', 100.0)  # According to paper: λ=100
+    class_loss_weight = loss_config.get('class_loss_weight', 1.0)  # According to paper: α=1.0
+    structure_weight = loss_config.get('structure_weight', 0.0)  # Paper doesn't use this (set to 0.0)
+    perceptual_weight = loss_config.get('perceptual_weight', 0.0)  # Paper doesn't use this (set to 0.0)
+    identity_penalty = loss_config.get('identity_penalty', 0.0)  # Paper doesn't use this (set to 0.0)
     
     # Dummy criterion for compatibility (not used)
     criterion = prompt_criterion
@@ -502,10 +490,10 @@ def main():
     trainer.prompt_criterion = prompt_criterion.to(device)
     trainer.class_criterion = class_criterion.to(device)
     trainer.prompt_weight = prompt_weight
-    trainer.class_loss_weight = loss_config.get('class_loss_weight', 3.0)  # Weight for class loss (emphasize classification)
-    trainer.identity_penalty = loss_config.get('identity_penalty', 2.0)  # Penalty for identity mapping
-    trainer.structure_weight = structure_weight  # Weight for structure preservation
-    trainer.perceptual_weight = perceptual_weight  # Weight for perceptual loss
+    trainer.class_loss_weight = class_loss_weight  # According to paper: α=1.0
+    trainer.identity_penalty = identity_penalty  # Paper doesn't use this (set to 0.0)
+    trainer.structure_weight = structure_weight  # Paper doesn't use this (set to 0.0)
+    trainer.perceptual_weight = perceptual_weight  # Paper doesn't use this (set to 0.0)
     trainer.labels = labels
     
     # Resume if specified
