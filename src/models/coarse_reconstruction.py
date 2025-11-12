@@ -129,26 +129,20 @@ class CoarseSNN(nn.Module):
         # Use temporal aggregation first, then process through SNN
         # This reduces memory while still using LIFNodes for temporal processing
         
-        # Temporal aggregation: combine temporal information before processing
-        # This reduces memory while preserving temporal dynamics
-        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-        spike_max = spikes.max(dim=1, keepdim=True)[0]  # [B, 1, H, W]
+        # Temporal aggregation: use weighted temporal average
+        # Simpler approach: weighted average with emphasis on recent spikes
+        # This preserves temporal information without losing too much detail
+        # Use exponential weights: later spikes have higher weights (like WGSE)
+        weights = torch.exp(torch.linspace(0, 2, T, device=spikes.device))  # [T]
+        weights = weights / weights.sum()  # Normalize to sum to 1
+        weights = weights.view(1, T, 1, 1)  # [1, T, 1, 1]
         
-        # Combine temporal statistics for richer features
-        # This preserves temporal information while reducing memory
-        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
+        # Weighted temporal average
+        x = (spikes * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
         
-        # Normalize to [0, 1] range per-sample (not global)
-        # Per-sample normalization ensures each sample is normalized independently
-        # This prevents batch size variation from affecting normalization
-        # and ensures consistent reconstruction quality across different batch sizes
-        for b in range(B):
-            sample = x[b, 0]  # [H, W]
-            sample_min = sample.min()
-            sample_max = sample.max()
-            sample_range = sample_max - sample_min + 1e-8
-            x[b, 0] = (sample - sample_min) / sample_range
+        # Simple normalization: just clamp to [0, 1] (spikes are already binary)
+        # Don't do aggressive per-sample normalization as it destroys intensity relationships
+        # The weighted average should already be in a reasonable range
         x = torch.clamp(x, 0, 1)
         
         # Process aggregated temporal features through SNN encoder
@@ -176,11 +170,10 @@ class CoarseSNN(nn.Module):
         x = self.dec1(d2)       # [B, 3, 224, 224]
 
         # Bound outputs to [0, 1] so images are viewable
-        # Use tanh + rescale instead of sigmoid to reduce blurring
-        # Sigmoid can cause saturation and blur fine details
-        # Tanh provides better gradient flow and sharper outputs
-        x = torch.tanh(x)  # [-1, 1]
-        x = (x + 1.0) / 2.0  # [0, 1]
-        x = torch.clamp(x, 0, 1)
+        # Use sigmoid for stable output activation (prevents color distortion)
+        # Sigmoid ensures outputs are in [0, 1] range without rescaling artifacts
+        # This prevents the purple/brown/green color fringing from tanh rescaling
+        x = torch.sigmoid(x)  # [0, 1]
+        x = torch.clamp(x, 0, 1)  # Ensure [0, 1] range
         
         return x
