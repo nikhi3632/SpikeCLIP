@@ -165,9 +165,9 @@ class CoarseSNN(nn.Module):
         # IMPROVEMENT: Also compute max to preserve sharp spikes (important for detail)
         spike_max = spikes_voxelized.max(dim=1, keepdim=True)[0]  # [B, 1, H, W]
         
-        # Combine: 70% weighted average (smooth) + 30% max (sharp details)
-        # This preserves both smooth temporal information and sharp spike events
-        x = 0.7 * weighted_avg + 0.3 * spike_max  # [B, 1, H, W]
+        # Combine: 60% weighted average (smooth) + 40% max (sharp details)
+        # Increased max weight to preserve more sharp details and reduce blurring
+        x = 0.6 * weighted_avg + 0.4 * spike_max  # [B, 1, H, W]
         
         # Simple normalization: just clamp to [0, 1] (spikes are already binary)
         # Don't do aggressive per-sample normalization as it destroys intensity relationships

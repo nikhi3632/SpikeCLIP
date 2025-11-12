@@ -25,22 +25,23 @@ coarse:
     l2_weight: 1.0
     perceptual_weight: 0.0  # According to paper: only L1/L2 loss (no perceptual)
     semantic_weight: 0.0  # According to paper: only L1/L2 loss (no semantic)
+    gradient_weight: 0.3  # Increased from 0.1 to preserve sharp edges and details
   
   # Training parameters
   training:
-    epochs: 20  # Increased to allow more learning (best was at epoch 5, but model needs more training)
+    epochs: 30  # Increased to allow more learning (with increased patience, model can train longer)
     batch_size: 8
-    learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
+    learning_rate: 0.00006  # Slightly increased from 4e-5 to 6e-5 for better learning
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 5  # Stop if no improvement for 5 epochs (prevent overfitting)
+    early_stopping_patience: 10  # Increased from 5 to 10 to allow more training time
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adam"  # According to paper: Adam (not AdamW)
-    lr: 0.00004  # According to paper: 4e-5 for U-CALTECH
+    lr: 0.00006  # Slightly increased from 4e-5 to 6e-5 to match training LR
     weight_decay: 0.0  # Paper doesn't mention weight decay (set to 0)
     momentum: 0.9  # Only for SGD
   
@@ -71,17 +72,17 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 3.0  # Weight for multi-class classification loss (increased to improve multi-class accuracy)
+    multi_class_weight: 8.0  # Increased from 3.0 to 8.0 for stronger multi-class learning
   
   # Training parameters
   training:
-    epochs: 1  # According to paper: 1 epoch for Stage 2 (U-CALTECH)
+    epochs: 10  # Increased from 5 to allow more training for prompts to learn
     batch_size: 8
     learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 10  # Early stopping will stop training if no improvement for 10 epochs
+    early_stopping_patience: 8  # Increased from 2 to allow more training before stopping
     early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience
   
   # Optimizer configuration
@@ -93,7 +94,7 @@ prompt:
   
   # Scheduler configuration
   scheduler:
-    type: "cosine"  # cosine, step, plateau
+    type: "constant"  # Changed from cosine to constant - with only 1 epoch, cosine scheduler decays LR to 0 immediately
     step_size: 30  # Only for step scheduler
     gamma: 0.1  # Only for step scheduler
   
@@ -117,7 +118,7 @@ refine:
     type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
     temperature: 0.07  # Temperature for contrastive loss
     prompt_weight: 10.0  # Reduced from 100.0 for training stability (can increase if stable)
-    class_loss_weight: 1.0  # α=1.0 according to paper (L_class has weight 1.0)
+    class_loss_weight: 2.5  # Increased from 1.0 to 2.5 to emphasize classification accuracy
     # Note: Paper uses λ=100, but we start with 10.0 for stability
     # Additional losses for stability (prevent image degradation):
     identity_penalty: 1.0  # Prevent identity mapping and image degradation

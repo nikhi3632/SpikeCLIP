@@ -122,12 +122,14 @@ def main():
     
     # Loss
     semantic_weight = loss_config.get('semantic_weight', 0.0)
+    gradient_weight = loss_config.get('gradient_weight', 0.1)
     criterion = get_loss_fn(
         loss_config.get('type', 'reconstruction'),
         l1_weight=loss_config.get('l1_weight', 1.0),
         l2_weight=loss_config.get('l2_weight', 1.0),
         perceptual_weight=perceptual_weight,
         semantic_weight=semantic_weight,  # Semantic alignment loss weight
+        gradient_weight=gradient_weight,  # Gradient loss weight for edge preservation
         clip_model=clip_model,  # Pass CLIP model for perceptual and semantic loss
         labels=labels  # Pass labels for semantic alignment
     )

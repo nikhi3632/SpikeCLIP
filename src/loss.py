@@ -135,13 +135,14 @@ class RefinementLoss(nn.Module):
 class ReconstructionLoss(nn.Module):
     """L1 + L2 loss for image reconstruction with optional perceptual and semantic loss."""
     def __init__(self, l1_weight=1.0, l2_weight=1.0, identity_penalty=0.0, perceptual_weight=0.0, 
-                 semantic_weight=0.0, clip_model=None, labels=None):
+                 semantic_weight=0.0, gradient_weight=0.1, clip_model=None, labels=None):
         super().__init__()
         self.l1_weight = l1_weight
         self.l2_weight = l2_weight
         self.identity_penalty = identity_penalty
         self.perceptual_weight = perceptual_weight
         self.semantic_weight = semantic_weight
+        self.gradient_weight = gradient_weight
         self.clip_model = clip_model
         self.labels = labels
         
@@ -212,7 +213,7 @@ class ReconstructionLoss(nn.Module):
             return F.l1_loss(grad_x1, grad_x2) + F.l1_loss(grad_y1, grad_y2)
         
         gradient_loss_val = gradient_loss(pred, target)
-        reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss + 0.1 * gradient_loss_val
+        reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss + self.gradient_weight * gradient_loss_val
         
         # Add perceptual loss to encourage meaningful feature learning
         if self.perceptual_weight > 0 and self.feature_extractor is not None:
