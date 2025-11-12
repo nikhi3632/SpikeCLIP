@@ -52,11 +52,10 @@ def visualize_samples(
                 break
             
             spikes = batch[0].to(device)  # [B, T, H, W]
-            label_indices = batch[2].to(device)  # [B]
             batch_labels = batch[1]  # List of label strings
             
-            # Forward pass through complete pipeline
-            refined_images, clip_features, coarse_images = model(spikes, label_indices)
+            # Forward pass through complete pipeline (no label_indices needed - classification removed)
+            refined_images, clip_features, coarse_images = model(spikes)
             
             # Generate HQ images for Stage 2 visualization (according to paper)
             # According to paper: HQ images from generation pipeline (mixture for real data)
@@ -68,19 +67,12 @@ def visualize_samples(
                 # Get images and intermediate results
                 # Input: Spike stream visualization
                 spike_stream = spikes[i].cpu().numpy()  # [T, H, W]
-                # Visualize spike count (total spikes per pixel)
                 spike_count = spike_stream.sum(axis=0)  # [H, W]
                 spike_count_normalized = (spike_count - spike_count.min()) / (spike_count.max() - spike_count.min() + 1e-8)
-                # Also show temporal average for reference
-                spike_avg = spike_stream.mean(axis=0)  # [H, W]
-                spike_avg_normalized = (spike_avg - spike_avg.min()) / (spike_avg.max() - spike_avg.min() + 1e-8)
                 
-                # Create training target (TFI) according to the paper
-                # According to paper: Stage 1 uses TFI (Texture from ISI) as target
+                # Create training target (TFI) for metrics computation
                 from utils.tfi import calculate_tfi_vectorized
                 tfi = calculate_tfi_vectorized(spikes[i:i+1], threshold=1.0)  # [1, 1, H, W]
-                tfi_np = tfi.squeeze().cpu().numpy()  # [H, W]
-                tfi_target = np.stack([tfi_np] * 3, axis=-1)  # [H, W, 3] - TFI target
                 
                 # Stage 1: Coarse reconstruction
                 coarse_img = coarse_images[i].cpu().permute(1, 2, 0).numpy()  # [H, W, 3]
@@ -113,118 +105,30 @@ def visualize_samples(
                 stage3_l1 = compute_l1_error(refined_tensor, coarse_tensor_clamped)
                 stage3_l2 = compute_l2_error(refined_tensor, coarse_tensor_clamped)
                 
-                # Error maps for visualization
-                stage1_error = np.abs(coarse_img - tfi_target)
-                stage3_error = np.abs(refined_img - coarse_img)
+                # Create simple visualization: Input, Intermediate, Output
+                fig, axes = plt.subplots(1, 4, figsize=(16, 4), constrained_layout=True)
                 
-                # Create comprehensive pipeline visualization
-                fig = plt.figure(figsize=(24, 12), constrained_layout=True)
-                gs = fig.add_gridspec(3, 6, hspace=0.3, wspace=0.3)
-                
-                # Row 1: Complete Pipeline Flow
-                # Input: Spike stream visualization
-                ax1 = fig.add_subplot(gs[0, 0])
-                ax1.imshow(spike_count_normalized, cmap='hot')
-                ax1.set_title(f'INPUT: Spike Stream\nCount Map (Total: {spike_count.sum():.0f} spikes)\nTrue Label: {batch_labels[i]}')
-                ax1.axis('off')
-                
-                # Training target (TFI) - Stage 1 target
-                ax2 = fig.add_subplot(gs[0, 1])
-                ax2.imshow(np.clip(tfi_target, 0, 1))
-                ax2.set_title('TARGET: TFI Result\n(Texture from ISI)\nStage 1 Training Target')
-                ax2.axis('off')
+                # Input: Spike stream count map
+                axes[0].imshow(spike_count_normalized, cmap='hot')
+                axes[0].set_title(f'INPUT\nSpike Stream\n({spike_count.sum():.0f} spikes)\nLabel: {batch_labels[i]}')
+                axes[0].axis('off')
                 
                 # Stage 1: Coarse Reconstruction
-                ax3 = fig.add_subplot(gs[0, 2])
-                ax3.imshow(np.clip(coarse_img, 0, 1))
-                ax3.set_title(f'STAGE 1: Coarse Reconstruction\nPSNR: {stage1_psnr:.2f}dB | SSIM: {stage1_ssim:.3f}\nL1: {stage1_l1:.4f} | L2: {stage1_l2:.4f}')
-                ax3.axis('off')
+                axes[1].imshow(np.clip(coarse_img, 0, 1))
+                axes[1].set_title(f'STAGE 1: Coarse\nPSNR: {stage1_psnr:.2f}dB\nSSIM: {stage1_ssim:.3f}')
+                axes[1].axis('off')
                 
-                # Stage 1 Error Map
-                ax4 = fig.add_subplot(gs[0, 3])
-                ax4.imshow(stage1_error.mean(axis=2), cmap='hot', vmin=0, vmax=0.5)
-                ax4.set_title('Stage 1 Error Map\n(Coarse vs TFI Target)')
-                ax4.axis('off')
-                
-                # Stage 2: HQ Image (reference)
-                ax5 = fig.add_subplot(gs[0, 4])
-                ax5.imshow(np.clip(hq_img_sample, 0, 1))
-                ax5.set_title('STAGE 2: HQ Image Reference\n(Mixture: TFI+WGSE+Count)\nUsed for Prompt Learning')
-                ax5.axis('off')
+                # Stage 2: HQ Image Reference
+                axes[2].imshow(np.clip(hq_img_sample, 0, 1))
+                axes[2].set_title('STAGE 2: HQ Reference\n(Mixture)')
+                axes[2].axis('off')
                 
                 # Stage 3: Refined Output
-                ax6 = fig.add_subplot(gs[0, 5])
-                ax6.imshow(np.clip(refined_img, 0, 1))
-                ax6.set_title(f'STAGE 3: Refined Output\nPSNR: {stage3_psnr:.2f}dB | SSIM: {stage3_ssim:.3f}\nL1: {stage3_l1:.4f} | L2: {stage3_l2:.4f}')
-                ax6.axis('off')
+                axes[3].imshow(np.clip(refined_img, 0, 1))
+                axes[3].set_title(f'STAGE 3: Refined\nPSNR: {stage3_psnr:.2f}dB\nSSIM: {stage3_ssim:.3f}')
+                axes[3].axis('off')
                 
-                # Row 2: Error Maps and Comparisons
-                # Stage 3 Error Map
-                ax7 = fig.add_subplot(gs[1, 0])
-                ax7.imshow(stage3_error.mean(axis=2), cmap='hot', vmin=0, vmax=0.5)
-                ax7.set_title('Stage 3 Error Map\n(Refined vs Coarse)')
-                ax7.axis('off')
-                
-                # Full Pipeline: Input → Output
-                ax10 = fig.add_subplot(gs[1, 5])
-                # Show spike count, coarse, and refined side by side
-                pipeline_flow = np.hstack([
-                    np.stack([spike_count_normalized] * 3, axis=-1),  # Input
-                    np.clip(coarse_img, 0, 1),  # Stage 1
-                    np.clip(refined_img, 0, 1)  # Stage 3 output
-                ])
-                ax10.imshow(pipeline_flow)
-                ax10.axvline(spike_count_normalized.shape[1], color='cyan', linewidth=2)
-                ax10.axvline(spike_count_normalized.shape[1] * 2, color='cyan', linewidth=2)
-                ax10.set_title('Full Pipeline Flow\nInput → Stage 1 → Stage 3')
-                ax10.axis('off')
-                
-                # Row 3: Comprehensive Metrics Summary
-                ax11 = fig.add_subplot(gs[2, :])
-                ax11.axis('off')
-#                 metrics_text = f"""
-# {'='*100}
-# RECONSTRUCTION PIPELINE METRICS SUMMARY
-# {'='*100}
-
-# INPUT: Spike Stream
-#   - Temporal Frames: {spike_stream.shape[0]}
-#   - Spatial Resolution: {spike_stream.shape[1]}×{spike_stream.shape[2]}
-#   - Total Spikes: {spike_count.sum():.0f}
-#   - True Label: {batch_labels[i]}
-
-# STAGE 1: Coarse Reconstruction (Spike → TFI Target)
-#   - Target: TFI (Texture from ISI) result
-#   - PSNR: {stage1_psnr:.2f} dB {'✓' if stage1_psnr > 20 else '✗'} (Target: >20 dB)
-#   - SSIM: {stage1_ssim:.3f} {'✓' if stage1_ssim > 0.7 else '✗'} (Target: >0.7)
-#   - L1 Error: {stage1_l1:.4f} {'✓' if stage1_l1 < 0.1 else '✗'} (Target: <0.1)
-#   - L2 Error: {stage1_l2:.4f} {'✓' if stage1_l2 < 0.1 else '✗'} (Target: <0.1)
-#   - Interpretation: {'Good reconstruction' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
-
-# STAGE 2: Prompt Learning (HQ/LQ Discrimination)
-#   - HQ Image: Generated from mixture model (TFI + WGSE + Count)
-#   - Purpose: Learn high-quality vs low-quality image features
-#   - Output: Learned HQ and LQ prompts (used in Stage 3)
-
-# STAGE 3: Fine Reconstruction (Coarse → Refined)
-#   - Input: Coarse images from Stage 1
-#   - PSNR: {stage3_psnr:.2f} dB {'✓' if stage3_psnr < 100 else '⚠'} (Should be <inf if refining)
-#   - SSIM: {stage3_ssim:.3f} {'✓' if stage3_ssim < 1.0 else '⚠'} (Should be <1.0 if refining)
-#   - L1 Error: {stage3_l1:.4f} {'✓' if stage3_l1 > 0 else '⚠'} (Should be >0 if refining)
-#   - L2 Error: {stage3_l2:.4f} {'✓' if stage3_l2 > 0 else '⚠'} (Should be >0 if refining)
-#   - Interpretation: {'Refining (improving)' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Identity mapping (not refining)'}
-
-# OVERALL PIPELINE QUALITY:
-#   - Stage 1 Performance: {'Good' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
-#   - Stage 3 Refinement: {'Active' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Inactive'}
-#   - Final Output Quality: {'High' if stage1_psnr > 20 and stage3_ssim < 1.0 else 'Medium' if stage1_psnr > 15 else 'Low'}
-# {'='*100}
-#                 """
-                metrics_text= "visual_samples"
-                ax11.text(0.05, 0.5, metrics_text, fontsize=9, family='monospace', 
-                         verticalalignment='center', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
-                
-                # tight_layout() not needed with constrained_layout=True
+                # Save figure
                 save_path = output_dir / f'sample_{samples_visualized:03d}_pipeline.png'
                 plt.savefig(save_path, dpi=150, bbox_inches='tight')
                 plt.close()
@@ -321,10 +225,9 @@ def main():
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluation"):
             spikes = batch[0].to(device)
-            label_indices = batch[2].to(device) if len(batch) > 2 else None
             
-            # Forward pass
-            refined_images, clip_features, coarse_images = model(spikes, label_indices)
+            # Forward pass (no label_indices needed - classification removed)
+            refined_images, clip_features, coarse_images = model(spikes)
             
             # Reconstruction metrics
             # For unpaired training: compare refined vs coarse (improvement metric)

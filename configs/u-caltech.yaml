@@ -19,13 +19,15 @@ coarse:
     out_channels: 3
   
   # Loss parameters
+  # Simplified loss: Focus on basic reconstruction first (L1+L2)
+  # Perceptual/semantic losses may be dominating and preventing learning
   loss:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 1.0  # Increased from 0.5 to emphasize perceptual quality
-    semantic_weight: 1.5  # Increased from 1.0 to better align with text labels
-    gradient_weight: 0.3  # Preserves sharp edges and details
+    perceptual_weight: 0.0  # Disabled temporarily - was preventing basic learning
+    semantic_weight: 0.0  # Disabled temporarily - was preventing basic learning
+    gradient_weight: 0.0  # Disabled temporarily - focus on basic reconstruction first
   
   # Training parameters
   training:
