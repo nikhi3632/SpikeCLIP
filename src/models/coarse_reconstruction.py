@@ -124,21 +124,42 @@ class CoarseSNN(nn.Module):
         
         B, T, H, W = spikes.shape
         
-        # Memory-efficient SNN processing:
-        # Process temporal sequence in chunks to avoid OOM
-        # Use temporal aggregation first, then process through SNN
-        # This reduces memory while still using LIFNodes for temporal processing
+        # Voxelization: Reduce temporal dimension (200 → 50) as per paper
+        # Paper uses voxelization technique to squeeze input length of spike sequence
+        # This is common in event-based vision tasks
+        # Divide temporal sequence into bins and aggregate spikes within each bin
+        target_length = 50  # Paper: reduces from 200 to 50
+        if T > target_length:
+            # Vectorized voxelization: more efficient than loop
+            # Reshape spikes into bins: [B, T, H, W] -> [B, target_length, bin_size, H, W]
+            # Pad if needed to make T divisible by target_length
+            if T % target_length != 0:
+                # Pad to make divisible
+                pad_size = target_length - (T % target_length)
+                spikes = torch.cat([spikes, torch.zeros(B, pad_size, H, W, device=spikes.device, dtype=spikes.dtype)], dim=1)
+                T = spikes.shape[1]
+            
+            # Reshape: [B, T, H, W] -> [B, target_length, T//target_length, H, W]
+            bin_size_actual = T // target_length
+            spikes_reshaped = spikes.view(B, target_length, bin_size_actual, H, W)  # [B, target_length, bin_size, H, W]
+            # Sum over bin dimension to aggregate spikes
+            spikes_voxelized = spikes_reshaped.sum(dim=2)  # [B, target_length, H, W]
+            # Normalize by bin size to get average spike rate
+            spikes_voxelized = spikes_voxelized / bin_size_actual
+        else:
+            # If T <= target_length, use original spikes
+            spikes_voxelized = spikes
         
-        # Temporal aggregation: use weighted temporal average
-        # Simpler approach: weighted average with emphasis on recent spikes
-        # This preserves temporal information without losing too much detail
+        # Temporal aggregation: use weighted temporal average on voxelized spikes
+        # According to paper: voxelization reduces temporal dimension, then process
         # Use exponential weights: later spikes have higher weights (like WGSE)
-        weights = torch.exp(torch.linspace(0, 2, T, device=spikes.device))  # [T]
+        T_vox = spikes_voxelized.shape[1]
+        weights = torch.exp(torch.linspace(0, 2, T_vox, device=spikes.device))  # [T_vox]
         weights = weights / weights.sum()  # Normalize to sum to 1
-        weights = weights.view(1, T, 1, 1)  # [1, T, 1, 1]
+        weights = weights.view(1, T_vox, 1, 1)  # [1, T_vox, 1, 1]
         
-        # Weighted temporal average
-        x = (spikes * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
+        # Weighted temporal average on voxelized spikes
+        x = (spikes_voxelized * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
         
         # Simple normalization: just clamp to [0, 1] (spikes are already binary)
         # Don't do aggressive per-sample normalization as it destroys intensity relationships
