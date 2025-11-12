@@ -73,15 +73,11 @@ def main():
     l1_errors = []
     l2_errors = []
     
-    # Classification metrics
-    correct_predictions = 0
-    total_predictions = 0
-    
     print("Running end-to-end inference on test set...")
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Inference"):
             spikes = batch[0].to(device)  # [B, T, H, W]
-            label_indices = batch[2].to(device)  # [B]
+            label_indices = batch[2].to(device) if len(batch) > 2 else None  # [B] optional
             batch_size = spikes.size(0)
             
             # Track latency
@@ -97,12 +93,6 @@ def main():
                 torch.cuda.synchronize()
                 batch_time = time.time() - batch_start
                 latencies.append(batch_time)
-            
-            # Classification: Use model.classify() method which has all improvements built-in
-            # (ensemble prompts, temperature scaling, proper normalization)
-            predictions = model.classify(spikes)  # [B]
-            correct_predictions += (predictions == label_indices).sum().item()
-            total_predictions += predictions.size(0)
             
             # Reconstruction metrics (comparing refined to coarse)
             # For unpaired training: these metrics show refinement quality
@@ -146,7 +136,6 @@ def main():
     avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
     avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
     avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
-    accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
     
     # Prepare metrics text
     metrics_text = f"""===== END-TO-END PIPELINE INFERENCE METRICS =====
@@ -164,9 +153,6 @@ Average L1 Error: {avg_l1:.4f} (lower is better)
 Average L2 Error (MSE): {avg_l2:.4f} (lower is better)
 Note: Metrics compare refined images to coarse images (refinement quality).
       For unpaired training, these show how much the refinement stage improves coarse images.
-
---- Classification Metrics ---
-Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})
 
 --- GPU Performance Metrics ---
 Average Latency per batch: {gpu_metrics['avg_latency']:.4f}s ± {gpu_metrics['std_latency']:.4f}s
@@ -202,11 +188,6 @@ Total Inference Time: {inference_time:.2f}s
             'avg_ssim': avg_ssim,
             'avg_l1_error': avg_l1,
             'avg_l2_error': avg_l2
-        },
-        'classification_metrics': {
-            'accuracy': accuracy,
-            'correct': correct_predictions,
-            'total': total_predictions
         },
         'gpu_metrics': gpu_metrics,
         'inference_time': inference_time

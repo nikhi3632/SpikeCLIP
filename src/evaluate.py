@@ -59,24 +59,15 @@ def main():
     ssim_values = []
     l1_errors = []
     l2_errors = []
-    correct_predictions = 0
-    total_predictions = 0
-    
     eval_start = time.time()
     
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluation"):
             spikes = batch[0].to(device)
-            label_indices = batch[2].to(device)
+            label_indices = batch[2].to(device) if len(batch) > 2 else None
             
             # Forward pass
             refined_images, clip_features, coarse_images = model(spikes, label_indices)
-            
-            # Classification: Use model.classify() method which has all improvements built-in
-            # (ensemble prompts, temperature scaling, proper normalization)
-            predictions = model.classify(spikes)  # [B]
-            correct_predictions += (predictions == label_indices).sum().item()
-            total_predictions += predictions.size(0)
             
             # Reconstruction metrics
             # According to paper:
@@ -105,26 +96,21 @@ def main():
     avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
     avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
     avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
-    accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
     
     # Prepare metrics
+    total_samples = len(psnr_values)
     metrics_dict = {
         'timestamp': time.ctime(),
         'device': str(device),
         'dataset': data_dir,
         'checkpoint': args.checkpoint,
-        'total_samples': total_predictions,
+        'total_samples': total_samples,
         'evaluation_time': eval_time,
         'reconstruction_metrics': {
             'avg_psnr': float(avg_psnr),
             'avg_ssim': float(avg_ssim),
             'avg_l1_error': float(avg_l1),
             'avg_l2_error': float(avg_l2)
-        },
-        'classification_metrics': {
-            'accuracy': float(accuracy),
-            'correct': int(correct_predictions),
-            'total': int(total_predictions)
         }
     }
     
@@ -137,8 +123,6 @@ def main():
     print(f"  L2 Error: {avg_l2:.4f} (lower is better)")
     print(f"  Note: According to paper, Stage 3 refines coarse images.")
     print(f"        Metrics compare refined images to coarse images (refinement quality).")
-    print(f"\nClassification Metrics:")
-    print(f"  Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     print(f"\nEvaluation Time: {eval_time:.2f}s")
     
     # Save metrics

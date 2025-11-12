@@ -76,16 +76,10 @@ class RefineTrainer(Trainer):
                     hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                     prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                     
-                    # Class Loss: InfoNCE loss for classification
-                    # Use CLIP text features directly (according to paper: "class-label features")
-                    # text_features is [num_classes, clip_dim] - pre-computed in __init__
-                    class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                    # Only prompt loss (no classification loss)
+                    # Focus on reconstruction quality, not classification
                     
-                    # According to paper: L_total = L_class + λ*L_prompt (λ=100)
-                    # Paper only uses these two losses, but we include additional losses
-                    # with configurable weights (set to 0.0 in config to match paper exactly)
-                    
-                    # Additional losses (disabled by default to match paper):
+                    # Additional losses for stability (prevent image degradation):
                     l1_diff = F.l1_loss(refined_images, coarse_images)
                     identity_penalty = getattr(self, 'identity_penalty', 0.0)
                     identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
@@ -93,23 +87,23 @@ class RefineTrainer(Trainer):
                     structure_weight = getattr(self, 'structure_weight', 0.0)
                     structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                     
-                    # Perceptual loss (disabled by default to match paper):
+                    # Perceptual loss (disabled by default):
                     perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
                     if perceptual_weight > 0:
                         coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
                         coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
                         coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
                         coarse_features = F.normalize(coarse_features, dim=-1)
-                        refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                        coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                        perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                        # Use prompt features for perceptual alignment instead of text features
+                        hq_prompt_features, _ = self.hq_lq_prompt_model.get_prompt_features()
+                        refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)  # [B]
+                        coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)  # [B]
+                        perceptual_loss = F.mse_loss(refined_prompt_sim, coarse_prompt_sim + 0.05) * perceptual_weight
                     else:
                         perceptual_loss = 0.0
                     
-                    # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
-                    # Additional losses are included but with weight 0.0 to match paper
-                    loss = (self.class_loss_weight * class_loss + 
-                           self.prompt_weight * prompt_loss + 
+                    # Loss formula: L_total = λ*L_prompt + additional losses
+                    loss = (self.prompt_weight * prompt_loss + 
                            structure_loss + 
                            perceptual_loss + 
                            identity_penalty_term)
@@ -135,16 +129,10 @@ class RefineTrainer(Trainer):
                 hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                 prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                 
-                # Class Loss: InfoNCE loss for classification
-                # Use CLIP text features directly (according to paper: "class-label features")
-                # text_features is [num_classes, clip_dim] - pre-computed in __init__
-                class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                # Only prompt loss (no classification loss)
+                # Focus on reconstruction quality, not classification
                 
-                # According to paper: L_total = L_class + λ*L_prompt (λ=100)
-                # Paper only uses these two losses, but we include additional losses
-                # with configurable weights (set to 0.0 in config to match paper exactly)
-                
-                # Additional losses (disabled by default to match paper):
+                # Additional losses for stability (prevent image degradation):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = getattr(self, 'identity_penalty', 0.0)
                 identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
@@ -152,23 +140,23 @@ class RefineTrainer(Trainer):
                 structure_weight = getattr(self, 'structure_weight', 0.0)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                 
-                # Perceptual loss (disabled by default to match paper):
+                # Perceptual loss (disabled by default):
                 perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
                 if perceptual_weight > 0:
                     coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
                     coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
                     coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
                     coarse_features = F.normalize(coarse_features, dim=-1)
-                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                    # Use prompt features for perceptual alignment instead of text features
+                    hq_prompt_features, _ = self.hq_lq_prompt_model.get_prompt_features()
+                    refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)  # [B]
+                    coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)  # [B]
+                    perceptual_loss = F.mse_loss(refined_prompt_sim, coarse_prompt_sim + 0.05) * perceptual_weight
                 else:
                     perceptual_loss = 0.0
                 
-                # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
-                # Additional losses are included but with weight 0.0 to match paper
-                loss = (self.class_loss_weight * class_loss + 
-                       self.prompt_weight * prompt_loss + 
+                # Loss formula: L_total = λ*L_prompt + additional losses
+                loss = (self.prompt_weight * prompt_loss + 
                        structure_loss + 
                        perceptual_loss + 
                        identity_penalty_term)
@@ -235,16 +223,10 @@ class RefineTrainer(Trainer):
                 hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                 prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                 
-                # Class Loss: InfoNCE loss for classification
-                # Use CLIP text features directly (according to paper: "class-label features")
-                # text_features is [num_classes, clip_dim] - pre-computed in __init__
-                class_loss = self.class_criterion(image_features, self.text_features, label_indices)
+                # Only prompt loss (no classification loss)
+                # Focus on reconstruction quality, not classification
                 
-                # According to paper: L_total = L_class + λ*L_prompt (λ=100)
-                # Paper only uses these two losses, but we include additional losses
-                # with configurable weights (set to 0.0 in config to match paper exactly)
-                
-                # Additional losses (disabled by default to match paper):
+                # Additional losses for stability (prevent image degradation):
                 l1_diff = F.l1_loss(refined_images, coarse_images)
                 identity_penalty = getattr(self, 'identity_penalty', 0.0)
                 identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
@@ -252,23 +234,23 @@ class RefineTrainer(Trainer):
                 structure_weight = getattr(self, 'structure_weight', 0.0)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                 
-                # Perceptual loss (disabled by default to match paper):
+                # Perceptual loss (disabled by default):
                 perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
                 if perceptual_weight > 0:
                     coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
                     coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
                     coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
                     coarse_features = F.normalize(coarse_features, dim=-1)
-                    refined_text_sim = (image_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    coarse_text_sim = (coarse_features * self.text_features[label_indices]).sum(dim=1)  # [B]
-                    perceptual_loss = F.mse_loss(refined_text_sim, coarse_text_sim + 0.05) * perceptual_weight
+                    # Use prompt features for perceptual alignment instead of text features
+                    hq_prompt_features, _ = self.hq_lq_prompt_model.get_prompt_features()
+                    refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)  # [B]
+                    coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)  # [B]
+                    perceptual_loss = F.mse_loss(refined_prompt_sim, coarse_prompt_sim + 0.05) * perceptual_weight
                 else:
                     perceptual_loss = 0.0
                 
-                # Paper formula: L_total = L_class + λ*L_prompt (λ=100)
-                # Additional losses are included but with weight 0.0 to match paper
-                loss = (self.class_loss_weight * class_loss + 
-                       self.prompt_weight * prompt_loss + 
+                # Loss formula: L_total = λ*L_prompt + additional losses
+                loss = (self.prompt_weight * prompt_loss + 
                        structure_loss + 
                        perceptual_loss + 
                        identity_penalty_term)
@@ -399,13 +381,7 @@ def main():
     for param in clip_model.parameters():
         param.requires_grad = False
     
-    # Pre-compute CLIP text features for all classes (according to paper: "class-label features")
-    print("Pre-computing CLIP text features for all classes...")
-    with torch.no_grad():
-        text_prompts = [f"a photo of a {label}" for label in labels]
-        text_tokens = clip.tokenize(text_prompts).to(device)
-        text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
-        text_features = F.normalize(text_features, dim=-1)
+    # No text features needed - we removed classification
     
     # Load HQ/LQ prompt model from Stage 2 (for prompt loss)
     # Stage 3 depends on Stage 2 because:
@@ -436,17 +412,12 @@ def main():
     for param in hq_lq_prompt_model.parameters():
         param.requires_grad = False
     
-    # Loss functions according to paper: L_total = L_class + λ*L_prompt (λ=100)
+    # Loss functions: L_total = λ*L_prompt (removed L_class)
     prompt_criterion = get_loss_fn(
         'prompt',  # Prompt loss: alignment with HQ prompts
         temperature=loss_config.get('temperature', 0.07)
     )
-    class_criterion = get_loss_fn(
-        'info_nce',  # InfoNCE loss: classification
-        temperature=loss_config.get('temperature', 0.07)
-    )
     prompt_weight = loss_config.get('prompt_weight', 100.0)  # According to paper: λ=100
-    class_loss_weight = loss_config.get('class_loss_weight', 1.0)  # According to paper: α=1.0
     structure_weight = loss_config.get('structure_weight', 0.0)  # Paper doesn't use this (set to 0.0)
     perceptual_weight = loss_config.get('perceptual_weight', 0.0)  # Paper doesn't use this (set to 0.0)
     identity_penalty = loss_config.get('identity_penalty', 0.0)  # Paper doesn't use this (set to 0.0)
@@ -487,11 +458,8 @@ def main():
     trainer.coarse_model = coarse_model.to(device)
     trainer.hq_lq_prompt_model = hq_lq_prompt_model.to(device)
     trainer.clip_model = clip_model.to(device)
-    trainer.text_features = text_features.to(device)  # Pre-computed CLIP text features
     trainer.prompt_criterion = prompt_criterion.to(device)
-    trainer.class_criterion = class_criterion.to(device)
     trainer.prompt_weight = prompt_weight
-    trainer.class_loss_weight = class_loss_weight  # According to paper: α=1.0
     trainer.identity_penalty = identity_penalty  # Paper doesn't use this (set to 0.0)
     trainer.structure_weight = structure_weight  # Paper doesn't use this (set to 0.0)
     trainer.perceptual_weight = perceptual_weight  # Paper doesn't use this (set to 0.0)

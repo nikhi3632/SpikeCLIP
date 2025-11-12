@@ -23,9 +23,9 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.0  # According to paper: only L1/L2 loss (no perceptual)
-    semantic_weight: 0.0  # According to paper: only L1/L2 loss (no semantic)
-    gradient_weight: 0.3  # Increased from 0.1 to preserve sharp edges and details
+    perceptual_weight: 0.5  # Restored: helps with better reconstruction quality via CLIP features
+    semantic_weight: 1.0  # Restored: aligns images with text labels for better semantic understanding
+    gradient_weight: 0.3  # Preserves sharp edges and details
   
   # Training parameters
   training:
@@ -72,7 +72,6 @@ prompt:
   loss:
     type: "hq_lq_prompt"  # Use HQ/LQ prompt loss (binary classification)
     temperature: 0.07  # Temperature for contrastive loss
-    multi_class_weight: 8.0  # Increased from 3.0 to 8.0 for stronger multi-class learning
   
   # Training parameters
   training:
@@ -112,13 +111,12 @@ refine:
     base_channels: 64
     num_down: 4  # Number of downsampling layers
   
-  # Loss parameters - Prompt Loss + InfoNCE Loss (according to paper)
-  # According to paper: L_total = L_class + λ*L_prompt (λ=100)
+  # Loss parameters - Prompt Loss only (focus on reconstruction, not classification)
+  # According to paper: L_total = L_prompt (removed L_class)
   loss:
-    type: "prompt"  # Dummy type (not used, we use prompt_loss + class_loss)
+    type: "prompt"  # Prompt loss only
     temperature: 0.07  # Temperature for contrastive loss
     prompt_weight: 10.0  # Reduced from 100.0 for training stability (can increase if stable)
-    class_loss_weight: 2.5  # Increased from 1.0 to 2.5 to emphasize classification accuracy
     # Note: Paper uses λ=100, but we start with 10.0 for stability
     # Additional losses for stability (prevent image degradation):
     identity_penalty: 1.0  # Prevent identity mapping and image degradation

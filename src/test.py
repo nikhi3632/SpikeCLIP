@@ -369,66 +369,13 @@ def main():
     ssim_values = []
     l1_errors = []
     l2_errors = []
-    correct_predictions = 0
-    total_predictions = 0
-    
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluation"):
             spikes = batch[0].to(device)
-            label_indices = batch[2].to(device)
+            label_indices = batch[2].to(device) if len(batch) > 2 else None
             
             # Forward pass
             refined_images, clip_features, coarse_images = model(spikes, label_indices)
-            
-            # Classification: Use coarse images for better semantic alignment
-            # Coarse images have better semantic preservation (SSIM=0.72) than refined (SSIM=0.40)
-            # For 80%+ accuracy, we need the best semantic features
-            import clip
-            import torch.nn.functional as F
-            
-            # Get CLIP model from prompt model
-            clip_model = model.prompt_model.clip_model if hasattr(model.prompt_model, 'clip_model') else None
-            if clip_model is None:
-                # Fallback: load CLIP model directly
-                clip_model, _ = clip.load("ViT-B/32", device=device)
-                clip_model.eval()
-            
-            # Use coarse images for classification (better semantic alignment)
-            coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
-            coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
-            image_features = clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
-            image_features = F.normalize(image_features, dim=-1)
-            
-            # Use ensemble prompts for better robustness
-            # Multiple prompt templates reduce variance and improve accuracy
-            prompt_templates = [
-                "a photo of a {}",  # Match training
-                "a high quality photo of a {}",
-                "a clear image of a {}",
-                "a picture of a {}"
-            ]
-            
-            # Ensemble text features from multiple prompts
-            all_text_features_list = []
-            for template in prompt_templates:
-                text_prompts = [template.format(label) for label in labels]
-                text_tokens = clip.tokenize(text_prompts).to(device)
-                with torch.no_grad():
-                    text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
-                    text_features = F.normalize(text_features, dim=-1)
-                    all_text_features_list.append(text_features)
-            
-            # Average the text features from different prompts (ensemble)
-            all_text_features = torch.stack(all_text_features_list, dim=0).mean(dim=0)  # [num_classes, clip_dim]
-            all_text_features = F.normalize(all_text_features, dim=-1)
-            
-            # Compute similarity with temperature scaling for sharper discrimination
-            # For 80%+ accuracy, use lower temperature for sharper discrimination
-            temperature = 0.05  # Lower than training (0.07) for sharper discrimination at inference
-            similarities = torch.matmul(image_features, all_text_features.t()) / temperature
-            predictions = similarities.argmax(dim=1)
-            correct_predictions += (predictions == label_indices).sum().item()
-            total_predictions += predictions.size(0)
             
             # Reconstruction metrics
             # For unpaired training: compare refined vs coarse (improvement metric)
@@ -452,15 +399,12 @@ def main():
     avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
     avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
     avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
-    accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
-    
     # Print metrics
     print(f"\n===== TEST RESULTS =====")
     print(f"Reconstruction Metrics (Refined vs Coarse):")
     print(f"  PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}")
     print(f"  Note: According to paper, Stage 3 refines coarse images.")
     print(f"        Metrics compare refined images to coarse images (refinement quality).")
-    print(f"Classification - Accuracy: {accuracy:.4f} ({correct_predictions}/{total_predictions})")
     
     # Save test metrics to log file
     metrics_dict = {
@@ -475,11 +419,6 @@ def main():
             'avg_l1_error': float(avg_l1),
             'avg_l2_error': float(avg_l2)
         },
-        'classification_metrics': {
-            'accuracy': float(accuracy),
-            'correct': int(correct_predictions),
-            'total': int(total_predictions)
-        }
     }
     log_test_metrics(metrics_dict, output_dir=args.output_dir)
     

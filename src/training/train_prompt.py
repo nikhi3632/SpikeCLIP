@@ -82,19 +82,8 @@ class PromptTrainer(Trainer):
                     # Binary HQ/LQ loss
                     binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                     
-                    # Multi-class classification loss (if enabled)
-                    # Use only HQ images for multi-class training (better quality)
-                    hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                    if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                        # Get CLIP text features for multi-class classification
-                        if hasattr(self, 'text_features') and self.text_features is not None:
-                            class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
-                            # Combined loss: binary + multi-class
-                            loss = binary_loss + self.multi_class_weight * class_loss
-                        else:
-                            loss = binary_loss
-                    else:
-                        loss = binary_loss
+                    # Only binary HQ/LQ loss (no multi-class classification)
+                    loss = binary_loss
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -107,48 +96,24 @@ class PromptTrainer(Trainer):
                 # Binary HQ/LQ loss
                 binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                 
-                # Multi-class classification loss (if enabled)
-                # Use only HQ images for multi-class training (better quality)
-                hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                    # Get CLIP text features for multi-class classification
-                    if hasattr(self, 'text_features') and self.text_features is not None:
-                        class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
-                        # Combined loss: binary + multi-class
-                        loss = binary_loss + self.multi_class_weight * class_loss
-                    else:
-                        loss = binary_loss
-                else:
-                    loss = binary_loss
+                # Only binary HQ/LQ loss (no multi-class classification)
+                loss = binary_loss
                 
                 loss.backward()
                 if self.grad_clip:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
                 self.optimizer.step()
             
-            # Track classification accuracy (for monitoring)
+            # Track binary accuracy (HQ vs LQ) for monitoring
             with torch.no_grad():
-                # Binary accuracy (HQ vs LQ)
                 hq_sim = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)
                 lq_sim = (image_features @ lq_prompt_features.unsqueeze(0).t()).squeeze(-1)
                 logits = torch.stack([lq_sim, hq_sim], dim=1)
                 preds = logits.argmax(dim=1)
                 batch_binary_acc = (preds == labels).float().mean().item()
                 
-                # Multi-class accuracy (if enabled)
-                batch_multi_class_acc = 0.0
-                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                    if hasattr(self, 'text_features') and self.text_features is not None:
-                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                        similarities = torch.matmul(hq_image_features, self.text_features.t())  # [B, num_classes]
-                        multi_class_preds = similarities.argmax(dim=1)  # [B]
-                        batch_multi_class_acc = (multi_class_preds == label_indices).float().mean().item()
-                
                 if batch_idx == 0:  # Log first batch accuracy occasionally
-                    if batch_multi_class_acc > 0:
-                        pbar.set_postfix({'loss': f'{loss.item():.6f}', 'bin_acc': f'{batch_binary_acc:.3f}', 'cls_acc': f'{batch_multi_class_acc:.3f}'})
-                    else:
-                        pbar.set_postfix({'loss': f'{loss.item():.6f}', 'bin_acc': f'{batch_binary_acc:.3f}'})
+                    pbar.set_postfix({'loss': f'{loss.item():.6f}', 'bin_acc': f'{batch_binary_acc:.3f}'})
             
             # Track latency
             if self.track_gpu_metrics:
@@ -185,8 +150,6 @@ class PromptTrainer(Trainer):
         num_batches = 0
         correct_predictions = 0
         total_predictions = 0
-        multi_class_correct = 0
-        multi_class_total = 0
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
@@ -216,31 +179,15 @@ class PromptTrainer(Trainer):
                         # Binary HQ/LQ loss
                         binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                         
-                        # Multi-class classification loss (if enabled)
-                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                        if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                            if hasattr(self, 'text_features') and self.text_features is not None:
-                                class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
-                                loss = binary_loss + self.multi_class_weight * class_loss
-                            else:
-                                loss = binary_loss
-                        else:
-                            loss = binary_loss
+                        # Only binary HQ/LQ loss (no multi-class classification)
+                        loss = binary_loss
                 else:
                     image_features, hq_prompt_features, lq_prompt_features = self.model(all_images)
                     # Binary HQ/LQ loss
                     binary_loss = self.criterion(image_features, hq_prompt_features, lq_prompt_features, labels)
                     
-                    # Multi-class classification loss (if enabled)
-                    hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                    if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                        if hasattr(self, 'text_features') and self.text_features is not None:
-                            class_loss = self.class_criterion(hq_image_features, self.text_features, label_indices)
-                            loss = binary_loss + self.multi_class_weight * class_loss
-                        else:
-                            loss = binary_loss
-                    else:
-                        loss = binary_loss
+                    # Only binary HQ/LQ loss (no multi-class classification)
+                    loss = binary_loss
                 
                 # Compute binary classification accuracy (HQ vs LQ)
                 hq_similarity = (image_features @ hq_prompt_features.unsqueeze(0).t()).squeeze(-1)  # [2*B]
@@ -250,30 +197,19 @@ class PromptTrainer(Trainer):
                 correct_predictions += (predictions == labels).sum().item()
                 total_predictions += labels.size(0)
                 
-                # Compute multi-class classification accuracy (if enabled)
-                # Use HQ images for multi-class classification
-                if hasattr(self, 'class_criterion') and self.class_criterion is not None:
-                    if hasattr(self, 'text_features') and self.text_features is not None:
-                        hq_image_features = image_features[:batch_size]  # First batch_size are HQ images
-                        # Compute similarities with all class text features
-                        similarities = torch.matmul(hq_image_features, self.text_features.t())  # [B, num_classes]
-                        multi_class_predictions = similarities.argmax(dim=1)  # [B]
-                        multi_class_correct += (multi_class_predictions == label_indices).sum().item()
-                        multi_class_total += label_indices.size(0)
                 
                 total_loss += loss.item()
                 num_batches += 1
         
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
         binary_accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
-        multi_class_accuracy = multi_class_correct / multi_class_total if multi_class_total > 0 else 0.0
         
         # Log accuracy if available
         if hasattr(self, 'log_dir') and self.log_dir:
             import os
             log_file = os.path.join(self.log_dir, 'prompt_train_log.txt')
             with open(log_file, 'a') as f:
-                f.write(f"Epoch {self.current_epoch}: Val Loss: {avg_loss:.4f}, Binary Acc: {binary_accuracy:.4f}, Multi-class Acc: {multi_class_accuracy:.4f}\n")
+                f.write(f"Epoch {self.current_epoch}: Val Loss: {avg_loss:.4f}, Binary Acc: {binary_accuracy:.4f}\n")
         
         return avg_loss
 
@@ -392,39 +328,7 @@ def main():
         temperature=loss_config.get('temperature', 0.07)
     )
     
-    # Optional: Multi-class classification loss for Stage 2
-    # This helps Stage 2 learn better features for multi-class classification
-    multi_class_weight = loss_config.get('multi_class_weight', 0.0)  # 0.0 = disabled by default
-    class_criterion = None
-    text_features = None
-    
-    if multi_class_weight > 0:
-        import clip
-        import torch.nn.functional as F
-        
-        print("Enabling multi-class training for Stage 2...")
-        # Load CLIP model for text features
-        clip_model, _ = clip.load(model_config.get('clip_model_name', 'ViT-B/32'), device=device)
-        clip_model = clip_model.float()
-        clip_model.eval()
-        for param in clip_model.parameters():
-            param.requires_grad = False
-        
-        # Pre-compute CLIP text features for all classes
-        with torch.no_grad():
-            text_prompts = [f"a photo of a {label}" for label in labels]
-            text_tokens = clip.tokenize(text_prompts).to(device)
-            text_features = clip_model.encode_text(text_tokens)  # [num_classes, clip_dim]
-            text_features = F.normalize(text_features, dim=-1)
-        
-        # InfoNCE loss for multi-class classification
-        class_criterion = get_loss_fn(
-            'info_nce',
-            temperature=loss_config.get('temperature', 0.07)
-        )
-        
-        print(f"Multi-class weight: {multi_class_weight}")
-        print(f"Text features shape: {text_features.shape}")
+    # No multi-class classification - focus on binary HQ/LQ only
     
     # Optimizer
     optimizer_cfg = optimizer_config.copy()
@@ -456,10 +360,6 @@ def main():
     trainer.coarse_model = coarse_model.to(device)
     # Set HQ generation method from config
     trainer.hq_generation_method = model_config.get('hq_generation_method', 'mixture')
-    # Set multi-class training components (if enabled)
-    trainer.class_criterion = class_criterion
-    trainer.text_features = text_features.to(device) if text_features is not None else None
-    trainer.multi_class_weight = multi_class_weight
     
     # Resume if specified
     if args.resume:
