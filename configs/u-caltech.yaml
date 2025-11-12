@@ -28,13 +28,13 @@ coarse:
   
   # Training parameters
   training:
-    epochs: 10  # According to paper: 5 epochs for Stage 1 (U-CALTECH)
+    epochs: 20  # Increased to allow more learning (best was at epoch 5, but model needs more training)
     batch_size: 8
     learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 10  # Early stopping patience
+    early_stopping_patience: 5  # Stop if no improvement for 5 epochs (prevent overfitting)
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
@@ -46,9 +46,12 @@ coarse:
   
   # Scheduler configuration
   scheduler:
-    type: "cosine"  # cosine, step, plateau
+    type: "plateau"  # Changed from cosine to plateau - reduces LR only when loss plateaus (prevents premature decay)
     step_size: 30  # Only for step scheduler
     gamma: 0.1  # Only for step scheduler
+    patience: 3  # For plateau: reduce LR after 3 epochs without improvement
+    factor: 0.5  # For plateau: multiply LR by 0.5 when reducing
+    min_lr: 1e-6  # For plateau: minimum learning rate (prevent zero LR)
   
   # Output paths
   output:

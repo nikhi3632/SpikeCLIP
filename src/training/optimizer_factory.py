@@ -34,8 +34,11 @@ def build_scheduler(
         gamma = config.get('gamma', 0.1)
         return optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
     elif scheduler_type == 'plateau':
+        factor = config.get('factor', 0.5)
+        patience = config.get('patience', 5)
+        min_lr = config.get('min_lr', 1e-6)
         return optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=5
+            optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr
         )
     else:
         return optim.lr_scheduler.ConstantLR(optimizer)  # No-op scheduler

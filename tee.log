@@ -1,0 +1,7 @@
+Training Stage 1: Coarse Reconstruction...
+Using device: cuda
+Validation split ratio: 0.2
+Coarse Config: epochs=15, batch_size=4, lr=0.0001, seed=42
+Device info saved to outputs/logs/device_info.txt and outputs/logs/device_info.json
+Loading CLIP model for perceptual loss...
+CLIP model loaded successfully for perceptual loss
