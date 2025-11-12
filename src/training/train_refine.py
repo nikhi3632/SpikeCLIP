@@ -475,14 +475,15 @@ def main():
         device=device,
         checkpoint_dir=str(checkpoint_dir),
         use_amp=use_amp,
-        structure_weight=structure_weight,
-        perceptual_weight=perceptual_weight,
         grad_clip=grad_clip,
         checkpoint_prefix='refine',
         log_dir=log_dir,
         early_stopping_patience=early_stopping_patience,
         early_stopping_min_delta=early_stopping_min_delta
     )
+    # Set additional attributes after initialization (not part of base Trainer)
+    trainer.structure_weight = structure_weight
+    trainer.perceptual_weight = perceptual_weight
     trainer.coarse_model = coarse_model.to(device)
     trainer.hq_lq_prompt_model = hq_lq_prompt_model.to(device)
     trainer.clip_model = clip_model.to(device)
