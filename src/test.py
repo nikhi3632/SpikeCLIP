@@ -165,22 +165,6 @@ def visualize_samples(
                 ax7.set_title('Stage 3 Error Map\n(Refined vs Coarse)')
                 ax7.axis('off')
                 
-                # Comparison: TFI Target vs Coarse (Stage 1)
-                ax8 = fig.add_subplot(gs[1, 1:3])
-                comparison_stage1 = np.hstack([np.clip(tfi_target, 0, 1), np.clip(coarse_img, 0, 1)])
-                ax8.imshow(comparison_stage1)
-                ax8.axvline(tfi_target.shape[1], color='yellow', linewidth=3, linestyle='--')
-                ax8.set_title(f'Stage 1 Comparison: TFI Target (Left) vs Coarse (Right)\nPSNR: {stage1_psnr:.2f}dB | SSIM: {stage1_ssim:.3f}')
-                ax8.axis('off')
-                
-                # Comparison: Coarse vs Refined (Stage 3)
-                ax9 = fig.add_subplot(gs[1, 3:5])
-                comparison_stage3 = np.hstack([np.clip(coarse_img, 0, 1), np.clip(refined_img, 0, 1)])
-                ax9.imshow(comparison_stage3)
-                ax9.axvline(coarse_img.shape[1], color='yellow', linewidth=3, linestyle='--')
-                ax9.set_title(f'Stage 3 Comparison: Coarse (Left) vs Refined (Right)\nPSNR: {stage3_psnr:.2f}dB | SSIM: {stage3_ssim:.3f}')
-                ax9.axis('off')
-                
                 # Full Pipeline: Input → Output
                 ax10 = fig.add_subplot(gs[1, 5])
                 # Show spike count, coarse, and refined side by side
@@ -198,44 +182,45 @@ def visualize_samples(
                 # Row 3: Comprehensive Metrics Summary
                 ax11 = fig.add_subplot(gs[2, :])
                 ax11.axis('off')
-                metrics_text = f"""
-{'='*100}
-RECONSTRUCTION PIPELINE METRICS SUMMARY
-{'='*100}
+#                 metrics_text = f"""
+# {'='*100}
+# RECONSTRUCTION PIPELINE METRICS SUMMARY
+# {'='*100}
 
-INPUT: Spike Stream
-  - Temporal Frames: {spike_stream.shape[0]}
-  - Spatial Resolution: {spike_stream.shape[1]}×{spike_stream.shape[2]}
-  - Total Spikes: {spike_count.sum():.0f}
-  - True Label: {batch_labels[i]}
+# INPUT: Spike Stream
+#   - Temporal Frames: {spike_stream.shape[0]}
+#   - Spatial Resolution: {spike_stream.shape[1]}×{spike_stream.shape[2]}
+#   - Total Spikes: {spike_count.sum():.0f}
+#   - True Label: {batch_labels[i]}
 
-STAGE 1: Coarse Reconstruction (Spike → TFI Target)
-  - Target: TFI (Texture from ISI) result
-  - PSNR: {stage1_psnr:.2f} dB {'✓' if stage1_psnr > 20 else '✗'} (Target: >20 dB)
-  - SSIM: {stage1_ssim:.3f} {'✓' if stage1_ssim > 0.7 else '✗'} (Target: >0.7)
-  - L1 Error: {stage1_l1:.4f} {'✓' if stage1_l1 < 0.1 else '✗'} (Target: <0.1)
-  - L2 Error: {stage1_l2:.4f} {'✓' if stage1_l2 < 0.1 else '✗'} (Target: <0.1)
-  - Interpretation: {'Good reconstruction' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
+# STAGE 1: Coarse Reconstruction (Spike → TFI Target)
+#   - Target: TFI (Texture from ISI) result
+#   - PSNR: {stage1_psnr:.2f} dB {'✓' if stage1_psnr > 20 else '✗'} (Target: >20 dB)
+#   - SSIM: {stage1_ssim:.3f} {'✓' if stage1_ssim > 0.7 else '✗'} (Target: >0.7)
+#   - L1 Error: {stage1_l1:.4f} {'✓' if stage1_l1 < 0.1 else '✗'} (Target: <0.1)
+#   - L2 Error: {stage1_l2:.4f} {'✓' if stage1_l2 < 0.1 else '✗'} (Target: <0.1)
+#   - Interpretation: {'Good reconstruction' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
 
-STAGE 2: Prompt Learning (HQ/LQ Discrimination)
-  - HQ Image: Generated from mixture model (TFI + WGSE + Count)
-  - Purpose: Learn high-quality vs low-quality image features
-  - Output: Learned HQ and LQ prompts (used in Stage 3)
+# STAGE 2: Prompt Learning (HQ/LQ Discrimination)
+#   - HQ Image: Generated from mixture model (TFI + WGSE + Count)
+#   - Purpose: Learn high-quality vs low-quality image features
+#   - Output: Learned HQ and LQ prompts (used in Stage 3)
 
-STAGE 3: Fine Reconstruction (Coarse → Refined)
-  - Input: Coarse images from Stage 1
-  - PSNR: {stage3_psnr:.2f} dB {'✓' if stage3_psnr < 100 else '⚠'} (Should be <inf if refining)
-  - SSIM: {stage3_ssim:.3f} {'✓' if stage3_ssim < 1.0 else '⚠'} (Should be <1.0 if refining)
-  - L1 Error: {stage3_l1:.4f} {'✓' if stage3_l1 > 0 else '⚠'} (Should be >0 if refining)
-  - L2 Error: {stage3_l2:.4f} {'✓' if stage3_l2 > 0 else '⚠'} (Should be >0 if refining)
-  - Interpretation: {'Refining (improving)' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Identity mapping (not refining)'}
+# STAGE 3: Fine Reconstruction (Coarse → Refined)
+#   - Input: Coarse images from Stage 1
+#   - PSNR: {stage3_psnr:.2f} dB {'✓' if stage3_psnr < 100 else '⚠'} (Should be <inf if refining)
+#   - SSIM: {stage3_ssim:.3f} {'✓' if stage3_ssim < 1.0 else '⚠'} (Should be <1.0 if refining)
+#   - L1 Error: {stage3_l1:.4f} {'✓' if stage3_l1 > 0 else '⚠'} (Should be >0 if refining)
+#   - L2 Error: {stage3_l2:.4f} {'✓' if stage3_l2 > 0 else '⚠'} (Should be >0 if refining)
+#   - Interpretation: {'Refining (improving)' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Identity mapping (not refining)'}
 
-OVERALL PIPELINE QUALITY:
-  - Stage 1 Performance: {'Good' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
-  - Stage 3 Refinement: {'Active' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Inactive'}
-  - Final Output Quality: {'High' if stage1_psnr > 20 and stage3_ssim < 1.0 else 'Medium' if stage1_psnr > 15 else 'Low'}
-{'='*100}
-                """
+# OVERALL PIPELINE QUALITY:
+#   - Stage 1 Performance: {'Good' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}
+#   - Stage 3 Refinement: {'Active' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Inactive'}
+#   - Final Output Quality: {'High' if stage1_psnr > 20 and stage3_ssim < 1.0 else 'Medium' if stage1_psnr > 15 else 'Low'}
+# {'='*100}
+#                 """
+                metrics_text= "visual_samples"
                 ax11.text(0.05, 0.5, metrics_text, fontsize=9, family='monospace', 
                          verticalalignment='center', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
                 

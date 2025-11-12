@@ -23,36 +23,36 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 0.5  # Restored: helps with better reconstruction quality via CLIP features
-    semantic_weight: 1.0  # Restored: aligns images with text labels for better semantic understanding
+    perceptual_weight: 1.0  # Increased from 0.5 to emphasize perceptual quality
+    semantic_weight: 1.5  # Increased from 1.0 to better align with text labels
     gradient_weight: 0.3  # Preserves sharp edges and details
   
   # Training parameters
   training:
-    epochs: 30  # Increased to allow more learning (with increased patience, model can train longer)
+    epochs: 50  # Increased significantly to allow proper convergence
     batch_size: 8
-    learning_rate: 0.00004  # Slightly increased from 4e-5 to 6e-5 for better learning
+    learning_rate: 0.0001  # Increased from 4e-5 to 1e-4 for better learning signal
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 5  # Increased to 5 to allow more training time
+    early_stopping_patience: 15  # Increased significantly to prevent premature stopping
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
   optimizer:
     type: "adam"  # According to paper: Adam (not AdamW)
-    lr: 0.00004  # Slightly increased from 4e-5 to 6e-5 to match training LR
+    lr: 0.0001  # Increased to match training LR for better learning
     weight_decay: 0.0  # Paper doesn't mention weight decay (set to 0)
     momentum: 0.9  # Only for SGD
   
   # Scheduler configuration
   scheduler:
-    type: "plateau"  # Changed from cosine to plateau - reduces LR only when loss plateaus (prevents premature decay)
+    type: "plateau"  # Plateau scheduler - reduces LR only when loss plateaus
     step_size: 30  # Only for step scheduler
     gamma: 0.1  # Only for step scheduler
-    patience: 3  # For plateau: reduce LR after 3 epochs without improvement
+    patience: 5  # Increased from 3 to 5 - reduce LR after 5 epochs without improvement
     factor: 0.5  # For plateau: multiply LR by 0.5 when reducing
-    min_lr: 0.000001  # For plateau: minimum learning rate (prevent zero LR) - use decimal format for YAML
+    min_lr: 0.00001  # Increased minimum LR from 1e-6 to 1e-5 to prevent too low learning
   
   # Output paths
   output:
