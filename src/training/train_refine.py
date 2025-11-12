@@ -79,22 +79,37 @@ class RefineTrainer(Trainer):
                     # Only prompt loss (no classification loss)
                     # Focus on reconstruction quality, not classification
                     
-                    # Additional losses for stability (prevent image degradation):
-                    l1_diff = F.l1_loss(refined_images, coarse_images)
-                    identity_penalty = getattr(self, 'identity_penalty', 0.0)
-                    identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
+                    # FIX: Primary loss should be reconstruction improvement, not prompt alignment
+                    # Prompt loss alone causes abstract feature maps instead of refined images
                     
-                    structure_weight = getattr(self, 'structure_weight', 0.0)
+                    # Reconstruction loss: Encourage improvement over coarse (negative L1 = improvement)
+                    # We want refined to be BETTER than coarse, so we use negative L1 as reward
+                    reconstruction_weight = getattr(self, 'reconstruction_weight', 1.0)
+                    l1_diff = F.l1_loss(refined_images, coarse_images)
+                    # Negative reconstruction loss: smaller L1 = better (but we want some change)
+            # So we encourage small positive change (refinement, not identity)
+                    reconstruction_loss = reconstruction_weight * l1_diff
+                    
+                    # Structure preservation: Keep image structure (prevent degradation)
+                    structure_weight = getattr(self, 'structure_weight', 0.5)
                     structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                     
-                    # Perceptual loss (disabled by default):
+                    # L2 loss for smoothness
+                    l2_weight = getattr(self, 'l2_weight', 0.1)
+                    l2_loss = F.mse_loss(refined_images, coarse_images) * l2_weight if l2_weight > 0 else 0.0
+                    
+                    # Prompt loss: Reduced weight (was dominating and causing abstract outputs)
+                    # Only use as a guide, not the primary objective
+                    prompt_weight = getattr(self, 'prompt_weight', 0.1)  # Reduced from 10.0
+                    prompt_loss_term = prompt_weight * prompt_loss if prompt_weight > 0 else 0.0
+                    
+                    # Perceptual loss (optional, for quality):
                     perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
                     if perceptual_weight > 0:
                         coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
                         coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
                         coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
                         coarse_features = F.normalize(coarse_features, dim=-1)
-                        # Use prompt features for perceptual alignment instead of text features
                         hq_prompt_features, _ = self.hq_lq_prompt_model.get_prompt_features()
                         refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)  # [B]
                         coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)  # [B]
@@ -102,11 +117,13 @@ class RefineTrainer(Trainer):
                     else:
                         perceptual_loss = 0.0
                     
-                    # Loss formula: L_total = λ*L_prompt + additional losses
-                    loss = (self.prompt_weight * prompt_loss + 
+                    # FIX: Primary loss is reconstruction, prompt is secondary
+                    # This prevents abstract feature maps and preserves image structure
+                    loss = (reconstruction_loss + 
                            structure_loss + 
-                           perceptual_loss + 
-                           identity_penalty_term)
+                           l2_loss +
+                           prompt_loss_term + 
+                           perceptual_loss)
                 
                 self.scaler.scale(loss).backward()
                 if self.grad_clip:
@@ -125,41 +142,42 @@ class RefineTrainer(Trainer):
                 image_features = F.normalize(image_features, dim=-1)
                 
                 # Prompt Loss: Alignment with HQ prompts from Stage 2
-                # Uses learned HQ/LQ prompts from Stage 2 (hq_lq_prompt_model)
                 hq_prompt_features, lq_prompt_features = self.hq_lq_prompt_model.get_prompt_features()
                 prompt_loss = self.prompt_criterion(image_features, hq_prompt_features, lq_prompt_features)
                 
-                # Only prompt loss (no classification loss)
-                # Focus on reconstruction quality, not classification
-                
-                # Additional losses for stability (prevent image degradation):
+                # FIX: Use same loss function as AMP path (reconstruction-focused)
+                reconstruction_weight = getattr(self, 'reconstruction_weight', 1.0)
                 l1_diff = F.l1_loss(refined_images, coarse_images)
-                identity_penalty = getattr(self, 'identity_penalty', 0.0)
-                identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
+                reconstruction_loss = reconstruction_weight * l1_diff
                 
-                structure_weight = getattr(self, 'structure_weight', 0.0)
+                structure_weight = getattr(self, 'structure_weight', 0.5)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                 
-                # Perceptual loss (disabled by default):
+                l2_weight = getattr(self, 'l2_weight', 0.1)
+                l2_loss = F.mse_loss(refined_images, coarse_images) * l2_weight if l2_weight > 0 else 0.0
+                
+                prompt_weight = getattr(self, 'prompt_weight', 0.1)
+                prompt_loss_term = prompt_weight * prompt_loss if prompt_weight > 0 else 0.0
+                
                 perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
                 if perceptual_weight > 0:
                     coarse_normalized = F.interpolate(coarse_images, size=(224, 224), mode='bilinear', align_corners=False)
                     coarse_normalized = torch.clamp(coarse_normalized, 0, 1)
-                    coarse_features = self.clip_model.encode_image(coarse_normalized)  # [B, clip_dim]
+                    coarse_features = self.clip_model.encode_image(coarse_normalized)
                     coarse_features = F.normalize(coarse_features, dim=-1)
-                    # Use prompt features for perceptual alignment instead of text features
                     hq_prompt_features, _ = self.hq_lq_prompt_model.get_prompt_features()
-                    refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)  # [B]
-                    coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)  # [B]
+                    refined_prompt_sim = (image_features * hq_prompt_features).sum(dim=1)
+                    coarse_prompt_sim = (coarse_features * hq_prompt_features).sum(dim=1)
                     perceptual_loss = F.mse_loss(refined_prompt_sim, coarse_prompt_sim + 0.05) * perceptual_weight
                 else:
                     perceptual_loss = 0.0
                 
-                # Loss formula: L_total = λ*L_prompt + additional losses
-                loss = (self.prompt_weight * prompt_loss + 
+                # FIX: Primary loss is reconstruction, prompt is secondary
+                loss = (reconstruction_loss + 
                        structure_loss + 
-                       perceptual_loss + 
-                       identity_penalty_term)
+                       l2_loss +
+                       prompt_loss_term + 
+                       perceptual_loss)
                 
                 loss.backward()
                 if self.grad_clip:
@@ -412,15 +430,17 @@ def main():
     for param in hq_lq_prompt_model.parameters():
         param.requires_grad = False
     
-    # Loss functions: L_total = λ*L_prompt (removed L_class)
+    # FIX: Loss functions - Reconstruction-focused (not prompt-dominated)
     prompt_criterion = get_loss_fn(
-        'prompt',  # Prompt loss: alignment with HQ prompts
+        'prompt',  # Prompt loss: alignment with HQ prompts (secondary)
         temperature=loss_config.get('temperature', 0.07)
     )
-    prompt_weight = loss_config.get('prompt_weight', 100.0)  # According to paper: λ=100
-    structure_weight = loss_config.get('structure_weight', 0.0)  # Paper doesn't use this (set to 0.0)
-    perceptual_weight = loss_config.get('perceptual_weight', 0.0)  # Paper doesn't use this (set to 0.0)
-    identity_penalty = loss_config.get('identity_penalty', 0.0)  # Paper doesn't use this (set to 0.0)
+    # FIX: Reduced prompt weight - was causing abstract feature maps
+    prompt_weight = loss_config.get('prompt_weight', 0.1)  # Reduced from 10.0/100.0
+    reconstruction_weight = loss_config.get('reconstruction_weight', 1.0)  # Primary loss
+    structure_weight = loss_config.get('structure_weight', 0.5)  # Preserve structure
+    l2_weight = loss_config.get('l2_weight', 0.1)  # L2 smoothness
+    perceptual_weight = loss_config.get('perceptual_weight', 0.0)  # Disabled
     
     # Dummy criterion for compatibility (not used)
     criterion = prompt_criterion
@@ -453,16 +473,19 @@ def main():
         early_stopping_min_delta=early_stopping_min_delta
     )
     # Set additional attributes after initialization (not part of base Trainer)
+    trainer.reconstruction_weight = reconstruction_weight
     trainer.structure_weight = structure_weight
+    trainer.l2_weight = l2_weight
     trainer.perceptual_weight = perceptual_weight
     trainer.coarse_model = coarse_model.to(device)
     trainer.hq_lq_prompt_model = hq_lq_prompt_model.to(device)
     trainer.clip_model = clip_model.to(device)
     trainer.prompt_criterion = prompt_criterion.to(device)
     trainer.prompt_weight = prompt_weight
-    trainer.identity_penalty = identity_penalty  # Paper doesn't use this (set to 0.0)
-    trainer.structure_weight = structure_weight  # Paper doesn't use this (set to 0.0)
-    trainer.perceptual_weight = perceptual_weight  # Paper doesn't use this (set to 0.0)
+    trainer.reconstruction_weight = reconstruction_weight
+    trainer.structure_weight = structure_weight
+    trainer.l2_weight = l2_weight
+    trainer.perceptual_weight = perceptual_weight
     trainer.labels = labels
     
     # Resume if specified

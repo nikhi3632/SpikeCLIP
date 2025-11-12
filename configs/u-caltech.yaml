@@ -113,17 +113,17 @@ refine:
     base_channels: 64
     num_down: 4  # Number of downsampling layers
   
-  # Loss parameters - Prompt Loss only (focus on reconstruction, not classification)
-  # According to paper: L_total = L_prompt (removed L_class)
+  # Loss parameters - FIX: Reconstruction-focused loss (not prompt-dominated)
+  # Prompt loss was causing abstract feature maps instead of refined images
   loss:
-    type: "prompt"  # Prompt loss only
+    type: "prompt"  # Prompt loss (but reduced weight)
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 10.0  # Reduced from 100.0 for training stability (can increase if stable)
-    # Note: Paper uses λ=100, but we start with 10.0 for stability
-    # Additional losses for stability (prevent image degradation):
-    identity_penalty: 1.0  # Prevent identity mapping and image degradation
-    structure_weight: 0.5  # Preserve image structure (prevent negative SSIM)
-    perceptual_weight: 0.5  # Preserve perceptual quality
+    prompt_weight: 0.1  # FIX: Reduced from 10.0 - was dominating and causing abstract outputs
+    # Primary loss is now reconstruction (L1 + L2), prompt is secondary guide
+    reconstruction_weight: 1.0  # Primary: Reconstruction loss (L1)
+    structure_weight: 0.5  # Preserve image structure
+    l2_weight: 0.1  # L2 loss for smoothness
+    perceptual_weight: 0.0  # Disabled - was causing issues
   
   # Training parameters
   training:

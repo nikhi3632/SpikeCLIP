@@ -196,9 +196,10 @@ class CoarseSNN(nn.Module):
         
         x = self.dec1(d2)       # [B, 3, 224, 224]
 
-        # Bound outputs to [0, 1]
-        x = torch.tanh(x)  # [-1, 1]
-        x = (x + 1.0) / 2.0  # Rescale to [0, 1]
+        # FIX: Use sigmoid instead of tanh to prevent pink/magenta artifacts
+        # tanh + rescale can create color channel artifacts at edges
+        # sigmoid directly outputs [0, 1] range without artifacts
+        x = torch.sigmoid(x)  # [0, 1]
         x = torch.clamp(x, 0, 1)  # Ensure [0, 1] range
         
         return x
