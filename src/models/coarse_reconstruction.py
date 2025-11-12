@@ -129,22 +129,18 @@ class CoarseSNN(nn.Module):
         # Mean: overall intensity (can blur temporal details)
         # Variance: temporal dynamics and motion
         # Max: preserves sharp details (reduces blurring)
-        # Adjusted weights to better preserve structure and reduce blurring
-        # Further increased max weight and reduced mean to reduce blurring
-        # Max weight increased to 0.7 to preserve sharp details, mean reduced to 0.3
-        x = 0.3 * spike_mean + 0.2 * spike_var + 0.7 * spike_max  # [B, 1, H, W]
+        # Balanced weights for better reconstruction quality
+        # Equal emphasis on mean and max, with variance for dynamics
+        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
         
         # Normalize to [0, 1] range for better training stability
-        # Use per-sample normalization to preserve local contrast and reduce blurring
-        # Per-sample normalization preserves local details better than global normalization
-        # This helps reduce blurring and color distortion
-        B = x.shape[0]
-        for b in range(B):
-            sample = x[b, 0]  # [H, W]
-            if sample.max() > sample.min():
-                sample_min = sample.min()
-                sample_max = sample.max()
-                x[b, 0] = (sample - sample_min) / (sample_max - sample_min + 1e-8)
+        # Use global normalization across batch to preserve intensity relationships
+        # Per-sample normalization can cause blurring by losing global context
+        # Global normalization preserves relative intensities better
+        x_min = x.min()
+        x_max = x.max()
+        x_range = x_max - x_min + 1e-8
+        x = (x - x_min) / x_range
         x = torch.clamp(x, 0, 1)
 
         # Encoder with skip connections
