@@ -64,8 +64,8 @@ class SpikeCLIPModel(nn.Module):
         # Stage 3: Refinement
         refined_images = self.refine_model(coarse_images)  # [B, 3, H, W]
         
-        # Stage 2: Prompt learning (get CLIP features from refined images for better classification)
-        # Use refined images for classification (better than coarse images)
+        # Stage 2: Prompt learning (get CLIP features from refined images for consistent classification)
+        # Use refined images for classification to match classify() method
         # Note: text_features not needed here - only used during training for CLIP loss
         # For inference/classification, we get all class embeddings separately
         image_features = self.prompt_model.get_clip_features(refined_images)  # [B, D]
@@ -97,11 +97,10 @@ class SpikeCLIPModel(nn.Module):
         
         coarse_images = self.coarse_model(spikes)
         refined_images = self.refine_model(coarse_images)
-        # Try using coarse images for classification if refinement degrades semantic information
-        # Coarse images have better semantic alignment (SSIM=0.72) than refined (SSIM=0.40)
-        # For 80%+ accuracy, we need the best semantic features
-        # Use coarse images which have better semantic preservation
-        image_features = self.prompt_model.get_clip_features(coarse_images)
+        # Use refined images for classification to match forward() method
+        # This ensures consistent feature extraction for both forward() and classify()
+        # Refined images should have better quality after Stage 3 refinement
+        image_features = self.prompt_model.get_clip_features(refined_images)
         
         # Get CLIP model from prompt model
         clip_model = self.prompt_model.clip_model

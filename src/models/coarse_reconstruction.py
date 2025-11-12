@@ -139,11 +139,16 @@ class CoarseSNN(nn.Module):
         # This preserves temporal information while reducing memory
         x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
         
-        # Normalize to [0, 1] range
-        x_min = x.min()
-        x_max = x.max()
-        x_range = x_max - x_min + 1e-8
-        x = (x - x_min) / x_range
+        # Normalize to [0, 1] range per-sample (not global)
+        # Per-sample normalization ensures each sample is normalized independently
+        # This prevents batch size variation from affecting normalization
+        # and ensures consistent reconstruction quality across different batch sizes
+        for b in range(B):
+            sample = x[b, 0]  # [H, W]
+            sample_min = sample.min()
+            sample_max = sample.max()
+            sample_range = sample_max - sample_min + 1e-8
+            x[b, 0] = (sample - sample_min) / sample_range
         x = torch.clamp(x, 0, 1)
         
         # Process aggregated temporal features through SNN encoder

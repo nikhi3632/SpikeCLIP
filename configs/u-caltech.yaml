@@ -28,7 +28,7 @@ coarse:
   
   # Training parameters
   training:
-    epochs: 15  # Increased from 5 to 15 for better convergence (loss was still high at 1.38 after 5 epochs)
+    epochs: 8  # Increased from 5 to 8 for better convergence (loss was still high at 1.38 after 5 epochs)
     batch_size: 8
     learning_rate: 0.0001  # Increased from 4e-5 to 1e-4 for faster learning and better convergence
     seed: 42
@@ -129,7 +129,7 @@ refine:
     learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
     seed: 42
     use_amp: false
-    grad_clip: 1.0
+    grad_clip: 1.0  # Gradient clipping to prevent explosion with high prompt_weight=100.0
     early_stopping_patience: 10  # Early stopping will stop training if no improvement for 10 epochs
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
