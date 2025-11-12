@@ -82,25 +82,27 @@ class RefineTrainer(Trainer):
                     # FIX: Primary loss should be reconstruction improvement, not prompt alignment
                     # Prompt loss alone causes abstract feature maps instead of refined images
                     
-                    # Reconstruction loss: Encourage improvement over coarse (negative L1 = improvement)
-                    # We want refined to be BETTER than coarse, so we use negative L1 as reward
+                    # FIX: Prevent identity mapping - encourage actual refinement
                     reconstruction_weight = getattr(self, 'reconstruction_weight', 1.0)
                     l1_diff = F.l1_loss(refined_images, coarse_images)
-                    # Negative reconstruction loss: smaller L1 = better (but we want some change)
-            # So we encourage small positive change (refinement, not identity)
                     reconstruction_loss = reconstruction_weight * l1_diff
                     
                     # Structure preservation: Keep image structure (prevent degradation)
-                    structure_weight = getattr(self, 'structure_weight', 0.5)
+                    structure_weight = getattr(self, 'structure_weight', 0.01)
                     structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
                     
                     # L2 loss for smoothness
-                    l2_weight = getattr(self, 'l2_weight', 0.1)
+                    l2_weight = getattr(self, 'l2_weight', 0.01)
                     l2_loss = F.mse_loss(refined_images, coarse_images) * l2_weight if l2_weight > 0 else 0.0
                     
-                    # Prompt loss: Reduced weight (was dominating and causing abstract outputs)
-                    # Only use as a guide, not the primary objective
-                    prompt_weight = getattr(self, 'prompt_weight', 0.1)  # Reduced from 10.0
+                    # FIX: Identity penalty - strongly penalize copying coarse images
+                    identity_penalty_weight = getattr(self, 'identity_penalty', 1.0)
+                    # Penalty increases exponentially as images become more similar
+                    # When l1_diff is very small (identity), penalty is large
+                    identity_penalty_term = identity_penalty_weight * torch.exp(-l1_diff * 100.0) if identity_penalty_weight > 0 else 0.0
+                    
+                    # Prompt loss: Increased weight for stronger guidance
+                    prompt_weight = getattr(self, 'prompt_weight', 0.5)  # Increased from 0.1
                     prompt_loss_term = prompt_weight * prompt_loss if prompt_weight > 0 else 0.0
                     
                     # Perceptual loss (optional, for quality):
@@ -117,12 +119,13 @@ class RefineTrainer(Trainer):
                     else:
                         perceptual_loss = 0.0
                     
-                    # FIX: Primary loss is reconstruction, prompt is secondary
-                    # This prevents abstract feature maps and preserves image structure
+                    # FIX: Primary loss is reconstruction + prompt, with identity penalty
+                    # Identity penalty prevents copying coarse images
                     loss = (reconstruction_loss + 
                            structure_loss + 
                            l2_loss +
                            prompt_loss_term + 
+                           identity_penalty_term +  # NEW: Penalize identity mapping
                            perceptual_loss)
                 
                 self.scaler.scale(loss).backward()
@@ -251,13 +254,24 @@ class RefineTrainer(Trainer):
                 # Only prompt loss (no classification loss)
                 # Focus on reconstruction quality, not classification
                 
-                # Additional losses for stability (prevent image degradation):
+                # FIX: Prevent identity mapping - encourage actual refinement
+                reconstruction_weight = getattr(self, 'reconstruction_weight', 1.0)
                 l1_diff = F.l1_loss(refined_images, coarse_images)
-                identity_penalty = getattr(self, 'identity_penalty', 0.0)
-                identity_penalty_term = identity_penalty * torch.exp(-l1_diff * 50.0) if identity_penalty > 0 else 0.0
+                reconstruction_loss = reconstruction_weight * l1_diff
                 
-                structure_weight = getattr(self, 'structure_weight', 0.0)
+                structure_weight = getattr(self, 'structure_weight', 0.01)
                 structure_loss = F.l1_loss(refined_images, coarse_images) * structure_weight if structure_weight > 0 else 0.0
+                
+                l2_weight = getattr(self, 'l2_weight', 0.01)
+                l2_loss = F.mse_loss(refined_images, coarse_images) * l2_weight if l2_weight > 0 else 0.0
+                
+                # FIX: Identity penalty - strongly penalize copying coarse images
+                identity_penalty_weight = getattr(self, 'identity_penalty', 1.0)
+                # Penalty increases exponentially as images become more similar
+                identity_penalty_term = identity_penalty_weight * torch.exp(-l1_diff * 100.0) if identity_penalty_weight > 0 else 0.0
+                
+                prompt_weight = getattr(self, 'prompt_weight', 0.5)  # Increased from 0.1
+                prompt_loss_term = prompt_weight * prompt_loss if prompt_weight > 0 else 0.0
                 
                 # Perceptual loss (disabled by default):
                 perceptual_weight = getattr(self, 'perceptual_weight', 0.0)
@@ -274,11 +288,13 @@ class RefineTrainer(Trainer):
                 else:
                     perceptual_loss = 0.0
                 
-                # Loss formula: L_total = λ*L_prompt + additional losses
-                loss = (self.prompt_weight * prompt_loss + 
+                # FIX: Loss formula with identity penalty to prevent copying
+                loss = (reconstruction_loss + 
                        structure_loss + 
-                       perceptual_loss + 
-                       identity_penalty_term)
+                       l2_loss +
+                       prompt_loss_term + 
+                       identity_penalty_term +  # NEW: Penalize identity mapping
+                       perceptual_loss)
                 
                 # Compute reconstruction metrics (Stage 3: Refined vs Coarse)
                 refined_clamped = torch.clamp(refined_images, 0, 1)
@@ -463,16 +479,17 @@ def main():
     for param in hq_lq_prompt_model.parameters():
         param.requires_grad = False
     
-    # FIX: Loss functions - Reconstruction-focused (not prompt-dominated)
+    # FIX: Loss functions - Prevent identity mapping
     prompt_criterion = get_loss_fn(
-        'prompt',  # Prompt loss: alignment with HQ prompts (secondary)
+        'prompt',  # Prompt loss: alignment with HQ prompts
         temperature=loss_config.get('temperature', 0.07)
     )
-    # FIX: Reduced prompt weight - was causing abstract feature maps
-    prompt_weight = loss_config.get('prompt_weight', 0.1)  # Reduced from 10.0/100.0
+    # FIX: Adjusted weights to prevent identity mapping
+    prompt_weight = loss_config.get('prompt_weight', 0.5)  # Increased from 0.1
     reconstruction_weight = loss_config.get('reconstruction_weight', 1.0)  # Primary loss
-    structure_weight = loss_config.get('structure_weight', 0.5)  # Preserve structure
-    l2_weight = loss_config.get('l2_weight', 0.1)  # L2 smoothness
+    structure_weight = loss_config.get('structure_weight', 0.01)  # Reduced from 0.1
+    l2_weight = loss_config.get('l2_weight', 0.01)  # Reduced from 0.05
+    identity_penalty = loss_config.get('identity_penalty', 1.0)  # NEW: Prevent copying
     perceptual_weight = loss_config.get('perceptual_weight', 0.0)  # Disabled
     
     # Dummy criterion for compatibility (not used)
@@ -509,16 +526,13 @@ def main():
     trainer.reconstruction_weight = reconstruction_weight
     trainer.structure_weight = structure_weight
     trainer.l2_weight = l2_weight
+    trainer.prompt_weight = prompt_weight
+    trainer.identity_penalty = identity_penalty  # NEW: Prevent identity mapping
     trainer.perceptual_weight = perceptual_weight
     trainer.coarse_model = coarse_model.to(device)
     trainer.hq_lq_prompt_model = hq_lq_prompt_model.to(device)
     trainer.clip_model = clip_model.to(device)
     trainer.prompt_criterion = prompt_criterion.to(device)
-    trainer.prompt_weight = prompt_weight
-    trainer.reconstruction_weight = reconstruction_weight
-    trainer.structure_weight = structure_weight
-    trainer.l2_weight = l2_weight
-    trainer.perceptual_weight = perceptual_weight
     trainer.labels = labels
     
     # Resume if specified

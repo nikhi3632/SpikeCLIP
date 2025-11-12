@@ -116,13 +116,14 @@ refine:
   # Loss parameters - FIX: Reconstruction-focused loss (not prompt-dominated)
   # Prompt loss was causing abstract feature maps instead of refined images
   loss:
-    type: "prompt"  # Prompt loss (but reduced weight)
+    type: "prompt"  # Prompt loss
     temperature: 0.07  # Temperature for contrastive loss
-    prompt_weight: 0.1  # FIX: Reduced from 10.0 - was dominating and causing abstract outputs
-    # Primary loss is now reconstruction (L1 + L2), prompt is secondary guide
+    # FIX: Prevent identity mapping - Stage 3 must actually refine, not copy
     reconstruction_weight: 1.0  # Primary: Reconstruction loss (L1)
-    structure_weight: 0.1  # FIX: Reduced from 0.5 - was preventing sharpening
-    l2_weight: 0.05  # FIX: Reduced from 0.1 - was causing blur
+    structure_weight: 0.01  # FIX: Further reduced from 0.1 - was causing identity mapping
+    l2_weight: 0.01  # FIX: Further reduced from 0.05 - was causing identity mapping
+    prompt_weight: 0.5  # FIX: Increased from 0.1 - stronger guidance for refinement
+    identity_penalty: 1.0  # FIX: NEW - Penalize identity mapping (prevent copying)
     perceptual_weight: 0.0  # Disabled - was causing issues
   
   # Training parameters
