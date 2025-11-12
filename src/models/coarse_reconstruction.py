@@ -64,50 +64,54 @@ class CoarseSNN(nn.Module):
 
         # Enhanced decoder with skip connections (U-Net style)
         # Use bilinear upsampling + conv instead of ConvTranspose for sharper outputs (reduces checkerboard artifacts)
+        # Use LIFNode throughout for consistent SNN architecture
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),  # 256 from skip connection
             nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(128, 128, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Layer 3: 56x56 -> 112x112
         self.dec3 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(256, 64, kernel_size=3, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(64, 64, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
             nn.Conv2d(128, 32, kernel_size=3, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv
             nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Final layer: 224x224 -> 224x224
         self.dec1 = nn.Sequential(
             nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32*2 from skip
             nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv for better features
             nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
+            LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
         )
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through SNN encoder-decoder with skip connections.
+        
+        Proper SNN implementation: Process temporal sequence [B, T, H, W] through network.
+        LIFNodes accumulate temporal information across time steps.
         
         Args:
             spikes: [B, T, H, W] input spike tensor
@@ -117,42 +121,59 @@ class CoarseSNN(nn.Module):
         """
         # Reset SNN state each forward so batches are independent
         functional.reset_net(self)
-
-        # Improved temporal aggregation: use mean + variance + max for richer features
-        # This provides better intensity, temporal variation, and preserves sharp details
-        # [B, T, H, W] -> [B, 1, H, W]
-        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
-        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
-        spike_max = spikes.max(dim=1, keepdim=True)[0]  # [B, 1, H, W] - preserves sharp details
         
-        # Combine mean, variance, and max for richer temporal information
-        # Mean: overall intensity (can blur temporal details)
-        # Variance: temporal dynamics and motion
-        # Max: preserves sharp details (reduces blurring)
-        # Balanced weights for better reconstruction quality
-        # Equal emphasis on mean and max, with variance for dynamics
-        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
+        B, T, H, W = spikes.shape
         
-        # Normalize to [0, 1] range for better training stability
-        # Use global normalization across batch to preserve intensity relationships
-        # Per-sample normalization can cause blurring by losing global context
-        # Global normalization preserves relative intensities better
-        x_min = x.min()
-        x_max = x.max()
-        x_range = x_max - x_min + 1e-8
-        x = (x - x_min) / x_range
-        x = torch.clamp(x, 0, 1)
-
-        # Encoder with skip connections
-        e1 = self.enc1(x)      # [B, 32, 224, 224]
-        e2 = self.enc2(e1)      # [B, 64, 112, 112]
-        e3 = self.enc3(e2)      # [B, 128, 56, 56]
-        e4 = self.enc4(e3)      # [B, 256, 28, 28]
+        # Initialize skip connection accumulators
+        # We'll accumulate skip connections across time steps
+        e1_acc = None
+        e2_acc = None
+        e3_acc = None
+        e4_acc = None
+        b_acc = None
         
-        # Bottleneck
-        b = self.bottleneck(e4)  # [B, 256, 28, 28]
+        # Process each time step through the encoder sequentially
+        # LIFNodes will accumulate temporal information across time steps
+        for t in range(T):
+            # Get spike frame at time t: [B, H, W] -> [B, 1, H, W]
+            spike_frame = spikes[:, t:t+1, :, :]  # [B, 1, H, W]
+            
+            # Encoder with skip connections (LIFNodes accumulate temporal info)
+            # LIFNodes maintain state across time steps, accumulating information
+            e1_t = self.enc1(spike_frame)      # [B, 32, 224, 224]
+            e2_t = self.enc2(e1_t)             # [B, 64, 112, 112]
+            e3_t = self.enc3(e2_t)             # [B, 128, 56, 56]
+            e4_t = self.enc4(e3_t)             # [B, 256, 28, 28]
+            
+            # Bottleneck
+            b_t = self.bottleneck(e4_t)        # [B, 256, 28, 28]
+            
+            # Accumulate skip connections across time steps
+            if e1_acc is None:
+                e1_acc = e1_t
+                e2_acc = e2_t
+                e3_acc = e3_t
+                e4_acc = e4_t
+                b_acc = b_t
+            else:
+                # Average accumulation (can also use sum or weighted sum)
+                e1_acc = (e1_acc * t + e1_t) / (t + 1)
+                e2_acc = (e2_acc * t + e2_t) / (t + 1)
+                e3_acc = (e3_acc * t + e3_t) / (t + 1)
+                e4_acc = (e4_acc * t + e4_t) / (t + 1)
+                b_acc = (b_acc * t + b_t) / (t + 1)
+        
+        # After processing all time steps, LIFNodes have accumulated temporal information
+        # Use accumulated features (average across all time steps)
+        # These features contain information from all time steps
+        e1 = e1_acc
+        e2 = e2_acc
+        e3 = e3_acc
+        e4 = e4_acc
+        b = b_acc
         
         # Decoder with skip connections (U-Net style)
+        # Process aggregated features through decoder
         d4 = self.dec4(b)       # [B, 128, 56, 56]
         d4 = torch.cat([d4, e3], dim=1)  # [B, 256, 56, 56] - skip connection
         
