@@ -23,14 +23,14 @@ coarse:
     type: "reconstruction"
     l1_weight: 1.0
     l2_weight: 1.0
-    perceptual_weight: 1.0  # Increased significantly to preserve structure (SSIM improvement)
-    semantic_weight: 2.0  # Increased further for better semantic alignment (critical for classification)
+    perceptual_weight: 2.0  # Increased from 1.0 to 2.0 to preserve structure and reduce blurring
+    semantic_weight: 1.5  # Reduced from 2.0 to 1.5 to balance with perceptual loss
   
   # Training parameters
   training:
-    epochs: 5  # According to paper: 5 epochs for Stage 1 (U-CALTECH)
+    epochs: 10  # Increased from 5 to improve quality (paper uses 5, but quality needs improvement)
     batch_size: 8
-    learning_rate: 0.00004  # According to paper: 4e-5 for U-CALTECH
+    learning_rate: 0.0001  # Increased from 4e-5 to 1e-4 for faster learning and better quality
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -40,7 +40,7 @@ coarse:
   # Optimizer configuration
   optimizer:
     type: "adamw"  # Changed to AdamW for better regularization
-    lr: 0.00004  # According to paper: 4e-5 for U-CALTECH
+    lr: 0.0001  # Increased from 4e-5 to 1e-4 for faster learning and better quality
     weight_decay: 0.0001  # Added weight decay to prevent collapse
     momentum: 0.9  # Only for SGD
   
