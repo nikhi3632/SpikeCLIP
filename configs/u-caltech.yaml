@@ -31,8 +31,8 @@ coarse:
   
   # Training parameters
   training:
-    epochs: 15  # Increased significantly to allow proper convergence
-    batch_size: 8
+    epochs: 30  # Increased significantly to allow proper convergence
+    batch_size: 16
     learning_rate: 0.0001  # Increased from 4e-5 to 1e-4 for better learning signal
     seed: 42
     use_amp: false
