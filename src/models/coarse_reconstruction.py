@@ -64,45 +64,46 @@ class CoarseSNN(nn.Module):
 
         # Enhanced decoder with skip connections (U-Net style)
         # Use nearest-neighbor upsampling + conv for sharper outputs
-        # TRUE SNN: LIFNodes in decoder for temporal processing
+        # FIX: Decoder processes only once (not temporal), so use ReLU instead of LIFNodes
+        # Hybrid approach: LIFNodes in encoder (temporal), ReLU in decoder (static)
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),  # 256 from skip connection
             nn.BatchNorm2d(128),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
             nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
         )
         # Layer 3: 56x56 -> 112x112
         self.dec3 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(256, 64, kernel_size=3, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
             nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(128, 32, kernel_size=3, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
             nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
         )
         # Final layer: 224x224 -> 224x224
         self.dec1 = nn.Sequential(
             nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32*2 from skip
             nn.BatchNorm2d(32),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
             nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
-            LIFNode(tau=tau, v_threshold=v_threshold),
+            nn.ReLU(inplace=True),  # ReLU for single-frame processing
             nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
         )
 
@@ -147,7 +148,13 @@ class CoarseSNN(nn.Module):
         
         # TRUE SNN: Process each time step through encoder
         # LIFNodes accumulate state across time steps
-        # Store encoder features from final time step for skip connections
+        # FIX: Aggregate encoder features across time for better skip connections
+        e1_list = []
+        e2_list = []
+        e3_list = []
+        e4_list = []
+        b_list = []
+        
         for t in range(T_vox):
             # Get spike frame at time t: [B, H, W] -> [B, 1, H, W]
             spike_frame = spikes_voxelized[:, t:t+1, :, :]  # [B, 1, H, W]
@@ -160,16 +167,24 @@ class CoarseSNN(nn.Module):
             
             # Bottleneck
             b_t = self.bottleneck(e4_t)        # [B, 256, 28, 28]
+            
+            # Store features for aggregation
+            e1_list.append(e1_t)
+            e2_list.append(e2_t)
+            e3_list.append(e3_t)
+            e4_list.append(e4_t)
+            b_list.append(b_t)
         
-        # Use final time step features for skip connections
-        e1 = e1_t  # [B, 32, 224, 224]
-        e2 = e2_t  # [B, 64, 112, 112]
-        e3 = e3_t  # [B, 128, 56, 56]
-        e4 = e4_t  # [B, 256, 28, 28]
-        b = b_t    # [B, 256, 28, 28]
+        # FIX: Aggregate encoder features across time (average pooling)
+        # This gives better skip connections than using only final time step
+        e1 = torch.stack(e1_list, dim=0).mean(dim=0)  # [B, 32, 224, 224]
+        e2 = torch.stack(e2_list, dim=0).mean(dim=0)  # [B, 64, 112, 112]
+        e3 = torch.stack(e3_list, dim=0).mean(dim=0)  # [B, 128, 56, 56]
+        e4 = torch.stack(e4_list, dim=0).mean(dim=0)  # [B, 256, 28, 28]
+        b = torch.stack(b_list, dim=0).mean(dim=0)    # [B, 256, 28, 28]
         
-        # Decoder: Process final bottleneck through decoder with skip connections
-        # Decoder also processes through LIFNodes (state already accumulated from encoder)
+        # Decoder: Process aggregated bottleneck through decoder with skip connections
+        # Decoder uses ReLU (not LIFNodes) since it processes only once
         d4 = self.dec4(b)       # [B, 128, 56, 56]
         d4 = torch.cat([d4, e3], dim=1)  # [B, 256, 56, 56] - skip connection
         
