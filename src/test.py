@@ -1,6 +1,7 @@
 """loads combined_model.pth → visualize + metrics"""
 import sys
 from pathlib import Path
+import math
 
 # Add parent directory to path for imports (if run from subdirectory)
 if Path(__file__).parent.name != 'src':
@@ -15,10 +16,25 @@ import time
 
 from config_loader import load_config
 from data_loader import get_loader
-from metrics import compute_psnr, compute_ssim, compute_l1_error, compute_l2_error
+from metrics import (
+    compute_brisque_score,
+    compute_l1_error,
+    compute_l2_error,
+    compute_niqe_score,
+    compute_piqe_score,
+    compute_psnr,
+    compute_ssim,
+)
 from utils.helpers import get_device, set_seed
 from utils.model_loading import load_combined_model
 from utils.logging import log_test_metrics
+
+
+def _nanmean(values):
+    filtered = [v for v in values if v is not None and not math.isnan(v)]
+    if not filtered:
+        return float('nan')
+    return sum(filtered) / len(filtered)
 
 def visualize_samples(
     model,
@@ -104,6 +120,14 @@ def visualize_samples(
                 stage3_ssim = compute_ssim(refined_tensor, coarse_tensor_clamped)
                 stage3_l1 = compute_l1_error(refined_tensor, coarse_tensor_clamped)
                 stage3_l2 = compute_l2_error(refined_tensor, coarse_tensor_clamped)
+
+                # No-reference IQA (lower = better)
+                coarse_niqe = compute_niqe_score(coarse_tensor)
+                coarse_brisque = compute_brisque_score(coarse_tensor)
+                coarse_piqe = compute_piqe_score(coarse_tensor)
+                refined_niqe = compute_niqe_score(refined_tensor)
+                refined_brisque = compute_brisque_score(refined_tensor)
+                refined_piqe = compute_piqe_score(refined_tensor)
                 
                 # Create simple visualization: Input, Intermediate, Output
                 fig, axes = plt.subplots(1, 4, figsize=(16, 4), constrained_layout=True)
@@ -157,6 +181,9 @@ def visualize_samples(
                     f.write(f"  SSIM: {stage3_ssim:.4f} {'✓' if stage3_ssim < 1.0 else '⚠'} (Should be <1.0 if refining)\n")
                     f.write(f"  L1 Error: {stage3_l1:.4f} {'✓' if stage3_l1 > 0 else '⚠'} (Should be >0 if refining)\n")
                     f.write(f"  L2 Error: {stage3_l2:.4f} {'✓' if stage3_l2 > 0 else '⚠'} (Should be >0 if refining)\n")
+                    f.write(f"  NR Quality (lower=better):\n")
+                    f.write(f"    Coarse  → NIQE {coarse_niqe:.2f}, BRISQUE {coarse_brisque:.2f}, PIQE {coarse_piqe:.2f}\n")
+                    f.write(f"    Refined → NIQE {refined_niqe:.2f}, BRISQUE {refined_brisque:.2f}, PIQE {refined_piqe:.2f}\n")
                     f.write(f"  Interpretation: {'Refining (improving)' if stage3_psnr < 100 and stage3_ssim < 1.0 else 'Identity mapping (not refining)'}\n")
                     f.write(f"\n--- OVERALL PIPELINE QUALITY ---\n")
                     f.write(f"  Stage 1 Performance: {'Good' if stage1_psnr > 20 and stage1_ssim > 0.7 else 'Needs improvement'}\n")
@@ -222,6 +249,12 @@ def main():
     ssim_values = []
     l1_errors = []
     l2_errors = []
+    coarse_niqe_scores = []
+    coarse_brisque_scores = []
+    coarse_piqe_scores = []
+    refined_niqe_scores = []
+    refined_brisque_scores = []
+    refined_piqe_scores = []
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Evaluation"):
             spikes = batch[0].to(device)
@@ -245,18 +278,35 @@ def main():
                 ssim_values.append(compute_ssim(pred_img, target_img))
                 l1_errors.append(compute_l1_error(pred_img, target_img))
                 l2_errors.append(compute_l2_error(pred_img, target_img))
+
+                # No-reference IQA scores (lower is better)
+                coarse_niqe_scores.append(compute_niqe_score(target_img))
+                coarse_brisque_scores.append(compute_brisque_score(target_img))
+                coarse_piqe_scores.append(compute_piqe_score(target_img))
+                refined_niqe_scores.append(compute_niqe_score(pred_img))
+                refined_brisque_scores.append(compute_brisque_score(pred_img))
+                refined_piqe_scores.append(compute_piqe_score(pred_img))
     
     # Compute averages
     avg_psnr = sum(psnr_values) / len(psnr_values) if psnr_values else 0.0
     avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
     avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
     avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
+    avg_coarse_niqe = _nanmean(coarse_niqe_scores)
+    avg_coarse_brisque = _nanmean(coarse_brisque_scores)
+    avg_coarse_piqe = _nanmean(coarse_piqe_scores)
+    avg_refined_niqe = _nanmean(refined_niqe_scores)
+    avg_refined_brisque = _nanmean(refined_brisque_scores)
+    avg_refined_piqe = _nanmean(refined_piqe_scores)
     # Print metrics
     print(f"\n===== TEST RESULTS =====")
     print(f"Reconstruction Metrics (Refined vs Coarse):")
     print(f"  PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}")
     print(f"  Note: According to paper, Stage 3 refines coarse images.")
     print(f"        Metrics compare refined images to coarse images (refinement quality).")
+    print("No-reference IQA (lower is better):")
+    print(f"  Coarse  – NIQE {avg_coarse_niqe:.2f}, BRISQUE {avg_coarse_brisque:.2f}, PIQE {avg_coarse_piqe:.2f}")
+    print(f"  Refined – NIQE {avg_refined_niqe:.2f}, BRISQUE {avg_refined_brisque:.2f}, PIQE {avg_refined_piqe:.2f}")
     
     # Save test metrics to log file
     metrics_dict = {
@@ -270,6 +320,18 @@ def main():
             'avg_ssim': float(avg_ssim),
             'avg_l1_error': float(avg_l1),
             'avg_l2_error': float(avg_l2)
+        },
+        'nr_metrics': {
+            'coarse': {
+                'niqe': float(avg_coarse_niqe),
+                'brisque': float(avg_coarse_brisque),
+                'piqe': float(avg_coarse_piqe),
+            },
+            'refined': {
+                'niqe': float(avg_refined_niqe),
+                'brisque': float(avg_refined_brisque),
+                'piqe': float(avg_refined_piqe),
+            },
         },
     }
     log_test_metrics(metrics_dict, output_dir=args.output_dir)

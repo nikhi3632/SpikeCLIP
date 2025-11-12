@@ -170,6 +170,23 @@ def log_test_metrics(
         f.write(f"  L1 Error: {recon.get('avg_l1_error', 0):.4f}\n")
         f.write(f"  L2 Error: {recon.get('avg_l2_error', 0):.4f}\n")
         f.write("\n" + "-" * 60 + "\n")
+        nr = metrics_dict.get('nr_metrics')
+        if nr:
+            f.write("No-Reference IQA (lower is better):\n")
+            f.write("-" * 60 + "\n")
+            coarse = nr.get('coarse', {})
+            refined = nr.get('refined', {})
+            f.write(
+                f"  Coarse  – NIQE: {coarse.get('niqe', float('nan')):.4f}, "
+                f"BRISQUE: {coarse.get('brisque', float('nan')):.4f}, "
+                f"PIQE: {coarse.get('piqe', float('nan')):.4f}\n"
+            )
+            f.write(
+                f"  Refined – NIQE: {refined.get('niqe', float('nan')):.4f}, "
+                f"BRISQUE: {refined.get('brisque', float('nan')):.4f}, "
+                f"PIQE: {refined.get('piqe', float('nan')):.4f}\n"
+            )
+            f.write("\n" + "-" * 60 + "\n")
 
     # Save as JSON
     json_file = output_dir / 'test_log.json'
@@ -177,4 +194,3 @@ def log_test_metrics(
         json.dump(metrics_dict, f, indent=2)
     
     print(f"Test metrics saved to {text_file} and {json_file}")
-
