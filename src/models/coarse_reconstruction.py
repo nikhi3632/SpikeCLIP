@@ -63,11 +63,11 @@ class CoarseSNN(nn.Module):
         )
 
         # Enhanced decoder with skip connections (U-Net style)
-        # Use bilinear upsampling + conv instead of ConvTranspose for sharper outputs (reduces checkerboard artifacts)
+        # IMPROVEMENT: Use nearest-neighbor upsampling + conv for sharper outputs (less blur than bilinear)
         # Use LIFNode throughout for consistent SNN architecture
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
             nn.Conv2d(256, 128, kernel_size=3, padding=1),  # 256 from skip connection
             nn.BatchNorm2d(128),
             LIFNode(tau=tau, v_threshold=v_threshold),
@@ -77,7 +77,7 @@ class CoarseSNN(nn.Module):
         )
         # Layer 3: 56x56 -> 112x112
         self.dec3 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
             nn.Conv2d(256, 64, kernel_size=3, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
             LIFNode(tau=tau, v_threshold=v_threshold),
@@ -87,7 +87,7 @@ class CoarseSNN(nn.Module):
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
             nn.Conv2d(128, 32, kernel_size=3, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
@@ -153,13 +153,21 @@ class CoarseSNN(nn.Module):
         # Temporal aggregation: use weighted temporal average on voxelized spikes
         # According to paper: voxelization reduces temporal dimension, then process
         # Use exponential weights: later spikes have higher weights (like WGSE)
+        # IMPROVEMENT: Combine weighted average with max to preserve sharp details
         T_vox = spikes_voxelized.shape[1]
         weights = torch.exp(torch.linspace(0, 2, T_vox, device=spikes.device))  # [T_vox]
         weights = weights / weights.sum()  # Normalize to sum to 1
         weights = weights.view(1, T_vox, 1, 1)  # [1, T_vox, 1, 1]
         
         # Weighted temporal average on voxelized spikes
-        x = (spikes_voxelized * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
+        weighted_avg = (spikes_voxelized * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
+        
+        # IMPROVEMENT: Also compute max to preserve sharp spikes (important for detail)
+        spike_max = spikes_voxelized.max(dim=1, keepdim=True)[0]  # [B, 1, H, W]
+        
+        # Combine: 70% weighted average (smooth) + 30% max (sharp details)
+        # This preserves both smooth temporal information and sharp spike events
+        x = 0.7 * weighted_avg + 0.3 * spike_max  # [B, 1, H, W]
         
         # Simple normalization: just clamp to [0, 1] (spikes are already binary)
         # Don't do aggressive per-sample normalization as it destroys intensity relationships
@@ -191,10 +199,11 @@ class CoarseSNN(nn.Module):
         x = self.dec1(d2)       # [B, 3, 224, 224]
 
         # Bound outputs to [0, 1] so images are viewable
-        # Use sigmoid for stable output activation (prevents color distortion)
-        # Sigmoid ensures outputs are in [0, 1] range without rescaling artifacts
-        # This prevents the purple/brown/green color fringing from tanh rescaling
-        x = torch.sigmoid(x)  # [0, 1]
+        # IMPROVEMENT: Use tanh + rescale for better dynamic range (less saturation)
+        # Tanh provides better gradient flow and less saturation than sigmoid
+        # Rescale from [-1, 1] to [0, 1] for image display
+        x = torch.tanh(x)  # [-1, 1]
+        x = (x + 1.0) / 2.0  # Rescale to [0, 1]
         x = torch.clamp(x, 0, 1)  # Ensure [0, 1] range
         
         return x

@@ -188,7 +188,31 @@ class ReconstructionLoss(nn.Module):
         """
         l1_loss = F.l1_loss(pred, target)
         l2_loss = F.mse_loss(pred, target)
-        reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss
+        
+        # IMPROVEMENT: Add gradient loss to preserve sharp edges and details
+        # Compute gradients (Sobel-like) to emphasize edge preservation
+        def gradient_loss(img1, img2):
+            # Compute gradients using Sobel filters
+            sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                                  dtype=img1.dtype, device=img1.device).view(1, 1, 3, 3)
+            sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                                  dtype=img1.dtype, device=img1.device).view(1, 1, 3, 3)
+            
+            # Apply to each channel
+            grad_x1 = F.conv2d(img1, sobel_x.repeat(img1.shape[1], 1, 1, 1), 
+                             groups=img1.shape[1], padding=1)
+            grad_y1 = F.conv2d(img1, sobel_y.repeat(img1.shape[1], 1, 1, 1), 
+                             groups=img1.shape[1], padding=1)
+            grad_x2 = F.conv2d(img2, sobel_x.repeat(img2.shape[1], 1, 1, 1), 
+                             groups=img2.shape[1], padding=1)
+            grad_y2 = F.conv2d(img2, sobel_y.repeat(img2.shape[1], 1, 1, 1), 
+                             groups=img2.shape[1], padding=1)
+            
+            # L1 loss on gradients (preserves sharp edges)
+            return F.l1_loss(grad_x1, grad_x2) + F.l1_loss(grad_y1, grad_y2)
+        
+        gradient_loss_val = gradient_loss(pred, target)
+        reconstruction_loss = self.l1_weight * l1_loss + self.l2_weight * l2_loss + 0.1 * gradient_loss_val
         
         # Add perceptual loss to encourage meaningful feature learning
         if self.perceptual_weight > 0 and self.feature_extractor is not None:
