@@ -106,6 +106,7 @@ sync-down:
 		--exclude='venv/' \
 		--exclude='__pycache__/' \
 		--exclude='*.pyc' \
+		--exclude='*.pth' \
 		--exclude='.git/' \
 		--exclude='data/' \
 		--exclude='.env' \
