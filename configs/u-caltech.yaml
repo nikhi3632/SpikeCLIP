@@ -133,7 +133,7 @@ refine:
     seed: 42
     use_amp: false
     grad_clip: 1.0  # Gradient clipping to prevent explosion with high prompt_weight=100.0
-    early_stopping_patience: 10  # Early stopping will stop training if no improvement for 10 epochs
+    early_stopping_patience: 5  # Early stopping will stop training if no improvement for 10 epochs
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
