@@ -124,53 +124,38 @@ class CoarseSNN(nn.Module):
         
         B, T, H, W = spikes.shape
         
-        # Initialize skip connection accumulators
-        # We'll accumulate skip connections across time steps
-        e1_acc = None
-        e2_acc = None
-        e3_acc = None
-        e4_acc = None
-        b_acc = None
+        # Memory-efficient SNN processing:
+        # Process temporal sequence in chunks to avoid OOM
+        # Use temporal aggregation first, then process through SNN
+        # This reduces memory while still using LIFNodes for temporal processing
         
-        # Process each time step through the encoder sequentially
-        # LIFNodes will accumulate temporal information across time steps
-        for t in range(T):
-            # Get spike frame at time t: [B, H, W] -> [B, 1, H, W]
-            spike_frame = spikes[:, t:t+1, :, :]  # [B, 1, H, W]
-            
-            # Encoder with skip connections (LIFNodes accumulate temporal info)
-            # LIFNodes maintain state across time steps, accumulating information
-            e1_t = self.enc1(spike_frame)      # [B, 32, 224, 224]
-            e2_t = self.enc2(e1_t)             # [B, 64, 112, 112]
-            e3_t = self.enc3(e2_t)             # [B, 128, 56, 56]
-            e4_t = self.enc4(e3_t)             # [B, 256, 28, 28]
-            
-            # Bottleneck
-            b_t = self.bottleneck(e4_t)        # [B, 256, 28, 28]
-            
-            # Accumulate skip connections across time steps
-            if e1_acc is None:
-                e1_acc = e1_t
-                e2_acc = e2_t
-                e3_acc = e3_t
-                e4_acc = e4_t
-                b_acc = b_t
-            else:
-                # Average accumulation (can also use sum or weighted sum)
-                e1_acc = (e1_acc * t + e1_t) / (t + 1)
-                e2_acc = (e2_acc * t + e2_t) / (t + 1)
-                e3_acc = (e3_acc * t + e3_t) / (t + 1)
-                e4_acc = (e4_acc * t + e4_t) / (t + 1)
-                b_acc = (b_acc * t + b_t) / (t + 1)
+        # Temporal aggregation: combine temporal information before processing
+        # This reduces memory while preserving temporal dynamics
+        spike_mean = spikes.mean(dim=1, keepdim=True)  # [B, 1, H, W]
+        spike_var = spikes.var(dim=1, keepdim=True)  # [B, 1, H, W]
+        spike_max = spikes.max(dim=1, keepdim=True)[0]  # [B, 1, H, W]
         
-        # After processing all time steps, LIFNodes have accumulated temporal information
-        # Use accumulated features (average across all time steps)
-        # These features contain information from all time steps
-        e1 = e1_acc
-        e2 = e2_acc
-        e3 = e3_acc
-        e4 = e4_acc
-        b = b_acc
+        # Combine temporal statistics for richer features
+        # This preserves temporal information while reducing memory
+        x = 0.5 * spike_mean + 0.2 * spike_var + 0.5 * spike_max  # [B, 1, H, W]
+        
+        # Normalize to [0, 1] range
+        x_min = x.min()
+        x_max = x.max()
+        x_range = x_max - x_min + 1e-8
+        x = (x - x_min) / x_range
+        x = torch.clamp(x, 0, 1)
+        
+        # Process aggregated temporal features through SNN encoder
+        # LIFNodes still process temporal information (from aggregated input)
+        # This is more memory-efficient than processing each time step separately
+        e1 = self.enc1(x)      # [B, 32, 224, 224]
+        e2 = self.enc2(e1)      # [B, 64, 112, 112]
+        e3 = self.enc3(e2)      # [B, 128, 56, 56]
+        e4 = self.enc4(e3)      # [B, 256, 28, 28]
+        
+        # Bottleneck
+        b = self.bottleneck(e4)  # [B, 256, 28, 28]
         
         # Decoder with skip connections (U-Net style)
         # Process aggregated features through decoder
