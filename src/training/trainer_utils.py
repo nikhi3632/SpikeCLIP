@@ -170,14 +170,14 @@ class Trainer:
                 spikes = batch[0].to(self.device)
                 label_indices = batch[2].to(self.device) if len(batch) > 2 else None  # [B] optional labels
                 
+                # OPTIMIZATION: Compute TFI once, reuse for both AMP and non-AMP paths
+                from utils.tfi import calculate_tfi_vectorized
+                tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
+                target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
+                
                 if self.use_amp:
                     with torch.amp.autocast('cuda'):
                         outputs = self.model(spikes)
-                        # Use TFI (Texture from ISI) as target according to the paper
-                        # TFI = Θ/ISI where ISI is Inter-Spike Interval
-                        from utils.tfi import calculate_tfi_vectorized
-                        tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
-                        target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                         # Pass label_indices for semantic alignment loss if available
                         if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                             loss = self.criterion(outputs, target, label_indices)
@@ -185,21 +185,41 @@ class Trainer:
                             loss = self.criterion(outputs, target)
                 else:
                     outputs = self.model(spikes)
-                    # Use TFI (Texture from ISI) as target according to the paper
-                    # TFI = Θ/ISI where ISI is Inter-Spike Interval
-                    from utils.tfi import calculate_tfi_vectorized
-                    tfi = calculate_tfi_vectorized(spikes, threshold=1.0)  # [B, 1, H, W]
-                    target = tfi.repeat(1, 3, 1, 1)  # [B, 3, H, W]
                     # Pass label_indices for semantic alignment loss if available
                     if hasattr(self.criterion, 'use_semantic') and self.criterion.use_semantic:
                         loss = self.criterion(outputs, target, label_indices)
                     else:
                         loss = self.criterion(outputs, target)
                 
+                # Compute reconstruction metrics (Stage 1: Coarse vs TFI)
+                # OPTIMIZATION: Compute on full batch, not per-sample (much faster)
+                outputs_clamped = torch.clamp(outputs, 0, 1)
+                target_clamped = torch.clamp(target, 0, 1)
+                # Batch-level metrics (average across batch)
+                psnr_values.append(compute_psnr(outputs_clamped, target_clamped))
+                ssim_values.append(compute_ssim(outputs_clamped, target_clamped))
+                l1_errors.append(compute_l1_error(outputs_clamped, target_clamped))
+                l2_errors.append(compute_l2_error(outputs_clamped, target_clamped))
+                
                 total_loss += loss.item()
                 num_batches += 1
         
-        return total_loss / num_batches
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        
+        # Compute average reconstruction metrics
+        avg_psnr = sum(psnr_values) / len(psnr_values) if psnr_values else 0.0
+        avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
+        avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
+        avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
+        
+        # Log reconstruction metrics to file
+        if hasattr(self, 'log_dir') and self.log_dir:
+            import os
+            log_file = os.path.join(self.log_dir, f'{self.stage}_train_log.txt')
+            with open(log_file, 'a') as f:
+                f.write(f"Epoch {self.current_epoch}: Val PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}\n")
+        
+        return avg_loss
     
     def train(self, num_epochs: int, scheduler: Optional[Any] = None):
         """Train model for multiple epochs. Saves best model based on validation loss and final model."""

@@ -297,15 +297,14 @@ class RefineTrainer(Trainer):
                        perceptual_loss)
                 
                 # Compute reconstruction metrics (Stage 3: Refined vs Coarse)
+                # OPTIMIZATION: Compute on full batch, not per-sample (much faster)
                 refined_clamped = torch.clamp(refined_images, 0, 1)
                 coarse_clamped = torch.clamp(coarse_images, 0, 1)
-                for i in range(refined_images.size(0)):
-                    pred_img = refined_clamped[i:i+1]
-                    target_img = coarse_clamped[i:i+1]
-                    psnr_values.append(compute_psnr(pred_img, target_img))
-                    ssim_values.append(compute_ssim(pred_img, target_img))
-                    l1_errors.append(compute_l1_error(pred_img, target_img))
-                    l2_errors.append(compute_l2_error(pred_img, target_img))
+                # Batch-level metrics (average across batch)
+                psnr_values.append(compute_psnr(refined_clamped, coarse_clamped))
+                ssim_values.append(compute_ssim(refined_clamped, coarse_clamped))
+                l1_errors.append(compute_l1_error(refined_clamped, coarse_clamped))
+                l2_errors.append(compute_l2_error(refined_clamped, coarse_clamped))
                 
                 total_loss += loss.item()
                 num_batches += 1
