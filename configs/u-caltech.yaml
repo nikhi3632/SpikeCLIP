@@ -31,7 +31,7 @@ coarse:
   training:
     epochs: 30  # Increased to allow more learning (with increased patience, model can train longer)
     batch_size: 8
-    learning_rate: 0.00006  # Slightly increased from 4e-5 to 6e-5 for better learning
+    learning_rate: 0.00004  # Slightly increased from 4e-5 to 6e-5 for better learning
     seed: 42
     use_amp: false
     grad_clip: 1.0
@@ -41,7 +41,7 @@ coarse:
   # Optimizer configuration
   optimizer:
     type: "adam"  # According to paper: Adam (not AdamW)
-    lr: 0.00006  # Slightly increased from 4e-5 to 6e-5 to match training LR
+    lr: 0.00004  # Slightly increased from 4e-5 to 6e-5 to match training LR
     weight_decay: 0.0  # Paper doesn't mention weight decay (set to 0)
     momentum: 0.9  # Only for SGD
   
