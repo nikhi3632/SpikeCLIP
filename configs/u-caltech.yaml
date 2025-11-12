@@ -51,7 +51,7 @@ coarse:
     gamma: 0.1  # Only for step scheduler
     patience: 3  # For plateau: reduce LR after 3 epochs without improvement
     factor: 0.5  # For plateau: multiply LR by 0.5 when reducing
-    min_lr: 1e-6  # For plateau: minimum learning rate (prevent zero LR)
+    min_lr: 0.000001  # For plateau: minimum learning rate (prevent zero LR) - use decimal format for YAML
   
   # Output paths
   output:

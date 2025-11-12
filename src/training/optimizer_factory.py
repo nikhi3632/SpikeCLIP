@@ -37,6 +37,9 @@ def build_scheduler(
         factor = config.get('factor', 0.5)
         patience = config.get('patience', 5)
         min_lr = config.get('min_lr', 1e-6)
+        # Convert min_lr to float if it's a string (YAML might parse 1e-6 as string)
+        if isinstance(min_lr, str):
+            min_lr = float(min_lr)
         return optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr
         )
