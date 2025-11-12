@@ -14,7 +14,7 @@ class CoarseSNN(nn.Module):
         super().__init__()
         self.time_steps = time_steps
 
-        # Enhanced encoder with more capacity and better feature extraction
+        # TRUE SNN: Enhanced encoder with LIFNodes for temporal processing
         # Layer 1: 224x224 -> 224x224 (extract more features)
         self.enc1 = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
@@ -63,35 +63,35 @@ class CoarseSNN(nn.Module):
         )
 
         # Enhanced decoder with skip connections (U-Net style)
-        # IMPROVEMENT: Use nearest-neighbor upsampling + conv for sharper outputs (less blur than bilinear)
-        # Use LIFNode throughout for consistent SNN architecture
+        # Use nearest-neighbor upsampling + conv for sharper outputs
+        # TRUE SNN: LIFNodes in decoder for temporal processing
         # Layer 4: 28x28 -> 56x56
         self.dec4 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
+            nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(256, 128, kernel_size=3, padding=1),  # 256 from skip connection
             nn.BatchNorm2d(128),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),  # Additional conv
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Layer 3: 56x56 -> 112x112
         self.dec3 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
+            nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(256, 64, kernel_size=3, padding=1),  # 128*2 from skip
             nn.BatchNorm2d(64),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),  # Additional conv
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
         # Layer 2: 112x112 -> 224x224
         self.dec2 = nn.Sequential(
-            nn.Upsample(scale_factor=2, mode='nearest'),  # Changed to nearest for sharper upsampling
+            nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(128, 32, kernel_size=3, padding=1),  # 64*2 from skip
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
         )
@@ -100,7 +100,7 @@ class CoarseSNN(nn.Module):
             nn.Conv2d(64, 32, kernel_size=3, padding=1),  # 32*2 from skip
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
-            nn.Conv2d(32, 32, kernel_size=3, padding=1),  # Additional conv for better features
+            nn.Conv2d(32, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             LIFNode(tau=tau, v_threshold=v_threshold),
             nn.Conv2d(32, out_channels, kernel_size=3, padding=1),
@@ -108,9 +108,7 @@ class CoarseSNN(nn.Module):
 
     def forward(self, spikes: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through SNN encoder-decoder with skip connections.
-        
-        Proper SNN implementation: Process temporal sequence [B, T, H, W] through network.
+        TRUE SNN forward pass: Process temporal sequence [B, T, H, W] through network.
         LIFNodes accumulate temporal information across time steps.
         
         Args:
@@ -119,74 +117,59 @@ class CoarseSNN(nn.Module):
         Returns:
             images: [B, 3, H, W] reconstructed images in [0, 1] range
         """
-        # Reset SNN state each forward so batches are independent
+        # Reset SNN state at the start of each forward pass
         functional.reset_net(self)
         
         B, T, H, W = spikes.shape
         
-        # Voxelization: Reduce temporal dimension (200 → 50) as per paper
-        # Paper uses voxelization technique to squeeze input length of spike sequence
-        # This is common in event-based vision tasks
-        # Divide temporal sequence into bins and aggregate spikes within each bin
-        target_length = 50  # Paper: reduces from 200 to 50
+        # TRUE SNN: Process temporal sequence through network
+        # Voxelization: Reduce temporal dimension for efficiency (200 → 50)
+        # This reduces memory while still allowing temporal processing
+        target_length = 50  # Reduce from 200 to 50 for efficiency
         if T > target_length:
-            # Vectorized voxelization: more efficient than loop
-            # Reshape spikes into bins: [B, T, H, W] -> [B, target_length, bin_size, H, W]
-            # Pad if needed to make T divisible by target_length
+            # Pad if needed
             if T % target_length != 0:
-                # Pad to make divisible
                 pad_size = target_length - (T % target_length)
                 spikes = torch.cat([spikes, torch.zeros(B, pad_size, H, W, device=spikes.device, dtype=spikes.dtype)], dim=1)
                 T = spikes.shape[1]
             
-            # Reshape: [B, T, H, W] -> [B, target_length, T//target_length, H, W]
+            # Voxelize: [B, T, H, W] -> [B, target_length, H, W]
             bin_size_actual = T // target_length
-            spikes_reshaped = spikes.view(B, target_length, bin_size_actual, H, W)  # [B, target_length, bin_size, H, W]
-            # Sum over bin dimension to aggregate spikes
+            spikes_reshaped = spikes.view(B, target_length, bin_size_actual, H, W)
+            # Sum over bin dimension (aggregate spikes within each bin)
             spikes_voxelized = spikes_reshaped.sum(dim=2)  # [B, target_length, H, W]
-            # Normalize by bin size to get average spike rate
+            # Normalize by bin size
             spikes_voxelized = spikes_voxelized / bin_size_actual
         else:
-            # If T <= target_length, use original spikes
             spikes_voxelized = spikes
         
-        # Temporal aggregation: use weighted temporal average on voxelized spikes
-        # According to paper: voxelization reduces temporal dimension, then process
-        # Use exponential weights: later spikes have higher weights (like WGSE)
-        # IMPROVEMENT: Combine weighted average with max to preserve sharp details
         T_vox = spikes_voxelized.shape[1]
-        weights = torch.exp(torch.linspace(0, 2, T_vox, device=spikes.device))  # [T_vox]
-        weights = weights / weights.sum()  # Normalize to sum to 1
-        weights = weights.view(1, T_vox, 1, 1)  # [1, T_vox, 1, 1]
         
-        # Weighted temporal average on voxelized spikes
-        weighted_avg = (spikes_voxelized * weights).sum(dim=1, keepdim=True)  # [B, 1, H, W]
+        # TRUE SNN: Process each time step through encoder
+        # LIFNodes accumulate state across time steps
+        # Store encoder features from final time step for skip connections
+        for t in range(T_vox):
+            # Get spike frame at time t: [B, H, W] -> [B, 1, H, W]
+            spike_frame = spikes_voxelized[:, t:t+1, :, :]  # [B, 1, H, W]
+            
+            # Process through encoder (LIFNodes accumulate state)
+            e1_t = self.enc1(spike_frame)      # [B, 32, 224, 224]
+            e2_t = self.enc2(e1_t)              # [B, 64, 112, 112]
+            e3_t = self.enc3(e2_t)              # [B, 128, 56, 56]
+            e4_t = self.enc4(e3_t)              # [B, 256, 28, 28]
+            
+            # Bottleneck
+            b_t = self.bottleneck(e4_t)        # [B, 256, 28, 28]
         
-        # IMPROVEMENT: Also compute max to preserve sharp spikes (important for detail)
-        spike_max = spikes_voxelized.max(dim=1, keepdim=True)[0]  # [B, 1, H, W]
+        # Use final time step features for skip connections
+        e1 = e1_t  # [B, 32, 224, 224]
+        e2 = e2_t  # [B, 64, 112, 112]
+        e3 = e3_t  # [B, 128, 56, 56]
+        e4 = e4_t  # [B, 256, 28, 28]
+        b = b_t    # [B, 256, 28, 28]
         
-        # Combine: 60% weighted average (smooth) + 40% max (sharp details)
-        # Increased max weight to preserve more sharp details and reduce blurring
-        x = 0.6 * weighted_avg + 0.4 * spike_max  # [B, 1, H, W]
-        
-        # Simple normalization: just clamp to [0, 1] (spikes are already binary)
-        # Don't do aggressive per-sample normalization as it destroys intensity relationships
-        # The weighted average should already be in a reasonable range
-        x = torch.clamp(x, 0, 1)
-        
-        # Process aggregated temporal features through SNN encoder
-        # LIFNodes still process temporal information (from aggregated input)
-        # This is more memory-efficient than processing each time step separately
-        e1 = self.enc1(x)      # [B, 32, 224, 224]
-        e2 = self.enc2(e1)      # [B, 64, 112, 112]
-        e3 = self.enc3(e2)      # [B, 128, 56, 56]
-        e4 = self.enc4(e3)      # [B, 256, 28, 28]
-        
-        # Bottleneck
-        b = self.bottleneck(e4)  # [B, 256, 28, 28]
-        
-        # Decoder with skip connections (U-Net style)
-        # Process aggregated features through decoder
+        # Decoder: Process final bottleneck through decoder with skip connections
+        # Decoder also processes through LIFNodes (state already accumulated from encoder)
         d4 = self.dec4(b)       # [B, 128, 56, 56]
         d4 = torch.cat([d4, e3], dim=1)  # [B, 256, 56, 56] - skip connection
         
@@ -198,10 +181,7 @@ class CoarseSNN(nn.Module):
         
         x = self.dec1(d2)       # [B, 3, 224, 224]
 
-        # Bound outputs to [0, 1] so images are viewable
-        # IMPROVEMENT: Use tanh + rescale for better dynamic range (less saturation)
-        # Tanh provides better gradient flow and less saturation than sigmoid
-        # Rescale from [-1, 1] to [0, 1] for image display
+        # Bound outputs to [0, 1]
         x = torch.tanh(x)  # [-1, 1]
         x = (x + 1.0) / 2.0  # Rescale to [0, 1]
         x = torch.clamp(x, 0, 1)  # Ensure [0, 1] range
