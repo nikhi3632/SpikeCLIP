@@ -43,5 +43,10 @@ def build_scheduler(
         return optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=factor, patience=patience, min_lr=min_lr
         )
+    elif scheduler_type == 'constant':
+        # ConstantLR keeps LR constant by multiplying by factor=1.0
+        # If factor is not specified, it defaults to 0, which sets LR to 0!
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0)  # Keep LR constant
     else:
-        return optim.lr_scheduler.ConstantLR(optimizer)  # No-op scheduler
+        # Default: no scheduler (LR stays constant)
+        return optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0)
