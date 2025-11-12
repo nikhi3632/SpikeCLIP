@@ -31,11 +31,11 @@ coarse:
   training:
     epochs: 30  # Increased to allow more learning (with increased patience, model can train longer)
     batch_size: 8
-    learning_rate: 0.00006  # Slightly increased from 4e-5 to 6e-5 for better learning
+    learning_rate: 0.00004  # Slightly increased from 4e-5 to 6e-5 for better learning
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 10  # Increased from 5 to 10 to allow more training time
+    early_stopping_patience: 5
     early_stopping_min_delta: 0.0001  # Minimum improvement to reset patience
   
   # Optimizer configuration
@@ -82,7 +82,7 @@ prompt:
     seed: 42
     use_amp: false
     grad_clip: 1.0
-    early_stopping_patience: 8  # Increased from 2 to allow more training before stopping
+    early_stopping_patience: 5  # Increased from 2 to allow more training before stopping
     early_stopping_min_delta: 0.000001  # Minimum improvement to reset patience
   
   # Optimizer configuration
