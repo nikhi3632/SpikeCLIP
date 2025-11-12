@@ -150,13 +150,14 @@ def calculate_tfi_vectorized(spikes: torch.Tensor, threshold: float = 1.0, middl
     # Normalize to [0, 1] range per sample
     tfi = tfi.unsqueeze(1)  # [B, 1, H, W]
     
-    # Normalize each sample independently
-    for b in range(B):
-        sample = tfi[b, 0]  # [H, W]
-        if sample.max() > sample.min():
-            sample_min = sample.min()
-            sample_max = sample.max()
-            tfi[b, 0] = (sample - sample_min) / (sample_max - sample_min + 1e-8)
+    # OPTIMIZATION: Vectorized batch normalization (much faster than Python loop)
+    # Compute min/max per sample using keepdim=True to preserve dimensions
+    tfi_flat = tfi.squeeze(1)  # [B, H, W]
+    tfi_min = tfi_flat.view(B, -1).min(dim=1, keepdim=True)[0].unsqueeze(-1)  # [B, 1, 1]
+    tfi_max = tfi_flat.view(B, -1).max(dim=1, keepdim=True)[0].unsqueeze(-1)  # [B, 1, 1]
+    tfi_range = tfi_max - tfi_min + 1e-8
+    # Normalize: (tfi - min) / range, broadcast across H, W
+    tfi = (tfi - tfi_min.unsqueeze(-1)) / tfi_range.unsqueeze(-1)  # [B, 1, H, W]
     
     tfi = torch.clamp(tfi, 0, 1)
     
