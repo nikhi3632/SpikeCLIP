@@ -150,13 +150,20 @@ class Trainer:
         return avg_loss, gpu_metrics
     
     def validate(self) -> float:
-        """Validate model."""
+        """Validate model. Returns validation loss and logs reconstruction metrics."""
         if self.val_loader is None:
             return 0.0
         
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        
+        # Track reconstruction metrics for Stage 1
+        from metrics import compute_psnr, compute_ssim, compute_l1_error, compute_l2_error
+        psnr_values = []
+        ssim_values = []
+        l1_errors = []
+        l2_errors = []
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):

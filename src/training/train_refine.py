@@ -210,13 +210,20 @@ class RefineTrainer(Trainer):
         return avg_loss, gpu_metrics
     
     def validate(self) -> float:
-        """Validate model."""
+        """Validate model. Returns validation loss and logs reconstruction metrics."""
         if self.val_loader is None:
             return 0.0
         
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        
+        # Track reconstruction metrics for Stage 3 (Refined vs Coarse)
+        from metrics import compute_psnr, compute_ssim, compute_l1_error, compute_l2_error
+        psnr_values = []
+        ssim_values = []
+        l1_errors = []
+        l2_errors = []
         
         with torch.no_grad():
             for batch in tqdm(self.val_loader, desc="Validation"):
@@ -273,10 +280,36 @@ class RefineTrainer(Trainer):
                        perceptual_loss + 
                        identity_penalty_term)
                 
+                # Compute reconstruction metrics (Stage 3: Refined vs Coarse)
+                refined_clamped = torch.clamp(refined_images, 0, 1)
+                coarse_clamped = torch.clamp(coarse_images, 0, 1)
+                for i in range(refined_images.size(0)):
+                    pred_img = refined_clamped[i:i+1]
+                    target_img = coarse_clamped[i:i+1]
+                    psnr_values.append(compute_psnr(pred_img, target_img))
+                    ssim_values.append(compute_ssim(pred_img, target_img))
+                    l1_errors.append(compute_l1_error(pred_img, target_img))
+                    l2_errors.append(compute_l2_error(pred_img, target_img))
+                
                 total_loss += loss.item()
                 num_batches += 1
         
-        return total_loss / num_batches
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        
+        # Compute average reconstruction metrics
+        avg_psnr = sum(psnr_values) / len(psnr_values) if psnr_values else 0.0
+        avg_ssim = sum(ssim_values) / len(ssim_values) if ssim_values else 0.0
+        avg_l1 = sum(l1_errors) / len(l1_errors) if l1_errors else 0.0
+        avg_l2 = sum(l2_errors) / len(l2_errors) if l2_errors else 0.0
+        
+        # Log reconstruction metrics to file
+        if hasattr(self, 'log_dir') and self.log_dir:
+            import os
+            log_file = os.path.join(self.log_dir, 'refine_train_log.txt')
+            with open(log_file, 'a') as f:
+                f.write(f"Epoch {self.current_epoch}: Val PSNR: {avg_psnr:.4f} dB, SSIM: {avg_ssim:.4f}, L1: {avg_l1:.4f}, L2: {avg_l2:.4f}\n")
+        
+        return avg_loss
 
 def main():
     parser = argparse.ArgumentParser(description='Train Stage 3: Refinement')
