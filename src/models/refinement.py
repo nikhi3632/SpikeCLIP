@@ -45,10 +45,14 @@ class RefinementNet(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        # Decoder blocks with skip connections
-        # Each decoder block upsamples, then concatenates with skip connection
-        # Bottleneck output is base_channels * 8
-        self.dec4_up = nn.ConvTranspose2d(base_channels * 8, base_channels * 4, kernel_size=2, stride=2)
+        # FIX: Decoder blocks with skip connections
+        # Replace ConvTranspose2d with Upsample + Conv for sharper outputs (less blur)
+        # ConvTranspose2d can cause checkerboard artifacts and blurriness
+        # Upsample + Conv is sharper and more stable
+        self.dec4_up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Nearest for sharper upsampling
+            nn.Conv2d(base_channels * 8, base_channels * 4, kernel_size=3, padding=1)
+        )
         self.dec4_conv = nn.Sequential(
             nn.Conv2d(base_channels * 8, base_channels * 4, kernel_size=3, padding=1),  # e3 is base_channels * 4
             nn.BatchNorm2d(base_channels * 4),
@@ -58,7 +62,10 @@ class RefinementNet(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        self.dec3_up = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, kernel_size=2, stride=2)  # d4 is base_channels * 4
+        self.dec3_up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Nearest for sharper upsampling
+            nn.Conv2d(base_channels * 4, base_channels * 2, kernel_size=3, padding=1)
+        )
         self.dec3_conv = nn.Sequential(
             nn.Conv2d(base_channels * 4, base_channels * 2, kernel_size=3, padding=1),  # d3_up(128) + e2(128) = 256
             nn.BatchNorm2d(base_channels * 2),
@@ -68,7 +75,10 @@ class RefinementNet(nn.Module):
             nn.ReLU(inplace=True)
         )
         
-        self.dec2_up = nn.ConvTranspose2d(base_channels * 2, base_channels, kernel_size=2, stride=2)  # d3 is base_channels * 2
+        self.dec2_up = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode='nearest'),  # Nearest for sharper upsampling
+            nn.Conv2d(base_channels * 2, base_channels, kernel_size=3, padding=1)
+        )
         self.dec2_conv = nn.Sequential(
             nn.Conv2d(base_channels * 2, base_channels, kernel_size=3, padding=1),  # d2_up(64) + e1(64) = 128
             nn.BatchNorm2d(base_channels),

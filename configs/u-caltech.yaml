@@ -121,8 +121,8 @@ refine:
     prompt_weight: 0.1  # FIX: Reduced from 10.0 - was dominating and causing abstract outputs
     # Primary loss is now reconstruction (L1 + L2), prompt is secondary guide
     reconstruction_weight: 1.0  # Primary: Reconstruction loss (L1)
-    structure_weight: 0.5  # Preserve image structure
-    l2_weight: 0.1  # L2 loss for smoothness
+    structure_weight: 0.1  # FIX: Reduced from 0.5 - was preventing sharpening
+    l2_weight: 0.05  # FIX: Reduced from 0.1 - was causing blur
     perceptual_weight: 0.0  # Disabled - was causing issues
   
   # Training parameters
